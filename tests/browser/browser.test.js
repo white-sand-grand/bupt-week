@@ -11,13 +11,17 @@ import { MemorySessionStore } from '../../server/storage/memory.js'
 /**
  * 浏览器端验证。
  *
- * 单独一个脚本（npm run test:browser），不并进 npm test：
- * 需要先装 chromium，而且比接口测试慢一个量级。
+ * 单独一个脚本（npm run test:browser），不并进 npm test：需要先装 chromium，
+ * 且比接口测试慢一个量级。
  *
- * 这里只验单元测试做不到的事：
- *   1. Vue 应用真的挂载并渲染（dev server 有模块缓存，200 不代表编译成功）
+ * 这里只验接口测试做不到的事：
+ *   1. Vue 应用真的挂载并渲染
  *   2. 下载链路：fetch → blob → <a download> → 落盘，文件名是附件名
- *   3. CORS 在真实浏览器里的行为（允许的来源能过，不允许的被拦）
+ *   3. CORS 在真实浏览器里的放行与拦截
+ *   4. 登录：表单、错误展示、localStorage 里存了什么、刷新后是否还在
+ *
+ * 全部测试共用一个 Vite + 一个 chromium——node --test 会把多个测试文件放进
+ * 不同进程并行跑，分成两个文件就会抢同一个端口，所以必须合在一处。
  */
 
 const BACKEND_PORT = 8787
@@ -26,6 +30,13 @@ const ALLOWED_ORIGIN = 'http://127.0.0.1:9911' // 模拟 GitHub Pages 域名（�
 const BLOCKED_ORIGIN = 'http://127.0.0.1:9912' // 未放行的来源
 const APP_ORIGIN = `http://127.0.0.1:${APP_PORT}`
 const BACKEND_ORIGIN = `http://127.0.0.1:${BACKEND_PORT}`
+
+const SESSION = {
+  sessionId: 'sid-2021001234',
+  username: '2021001234',
+  realName: '张三',
+  expiresAt: Date.now() + 3600_000,
+}
 
 // chrome-headless-shell 没装成（CDN 连接被重置），用完整的 chromium 构建顶上。
 const LAUNCH_OPTIONS = { channel: 'chromium' }
@@ -55,6 +66,10 @@ function startCrossOriginServer(origin) {
   })
   staticServers.push(server)
   return listen(server, Number(port))
+}
+
+function fulfill(route, body, status = 200) {
+  return route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) })
 }
 
 before(async () => {
@@ -95,22 +110,24 @@ after(async () => {
   await Promise.all(staticServers.map(close))
 })
 
+// ── 应用挂载 ────────────────────────────────────────────────────────────────
+
 test('应用真的挂载，并显示后端已连接', async () => {
   const page = await browser.newPage()
   try {
     await page.goto(APP_ORIGIN, { waitUntil: 'networkidle' })
 
-    // 挂载了：#app 里有真实 DOM，而不是空壳
     const heading = await page.textContent('h1')
     assert.equal(heading, 'BUPT-week')
 
-    // 链路通了：前端 → Vite 代理 → 后端 → JSON 形状 → Vue 渲染
     await page.waitForSelector('.status-ok', { timeout: 10000 })
     assert.match(await page.textContent('.status'), /后端已连接/)
   } finally {
     await page.close()
   }
 })
+
+// ── 下载链路 ────────────────────────────────────────────────────────────────
 
 test('下载链路：真实浏览器里落盘，文件名是附件名', async () => {
   const page = await browser.newPage()
@@ -128,7 +145,6 @@ test('下载链路：真实浏览器里落盘，文件名是附件名', async ()
     // 关键断言：文件名是作业里显示的附件名，不是 S3 的 storageId.pdf
     assert.equal(download.suggestedFilename(), '作业附件-第一章.pdf')
 
-    // 内容真的落盘了，不是空文件
     const saved = await download.path()
     assert.ok(readFileSync(saved, 'utf8').startsWith('%PDF-1.4'), '落盘内容应与源文件一致')
   } finally {
@@ -148,17 +164,17 @@ test('下载链路：上游 404 时抛出可读错误', async () => {
     )
 
     await page.click('#download')
-    await page.waitForFunction(
-      () => document.getElementById('result').textContent.startsWith('error:'),
-      { timeout: 10000 },
-    )
+    await page.waitForFunction(() => document.getElementById('result').textContent.startsWith('error:'), {
+      timeout: 10000,
+    })
 
-    const message = await page.textContent('#result')
-    assert.match(message, /error: 下载失败（HTTP 404）/)
+    assert.match(await page.textContent('#result'), /error: 下载失败（HTTP 404）/)
   } finally {
     await page.close()
   }
 })
+
+// ── CORS ────────────────────────────────────────────────────────────────────
 
 test('CORS：已放行的来源在真实浏览器里能调到后端', async () => {
   const page = await browser.newPage()
@@ -220,6 +236,208 @@ test('下载接口：无会话时返回 401 且带 stage（浏览器侧看到的
     assert.equal(body.payload.success, false)
     assert.equal(body.payload.stage, 'ucloud-auth')
     assert.match(body.payload.msg, /重新登录/)
+  } finally {
+    await page.close()
+  }
+})
+
+// ── 登录 ────────────────────────────────────────────────────────────────────
+
+const firstPanel = '.panels > .panel:nth-of-type(1)'
+const secondPanel = '.panels > .panel:nth-of-type(2)'
+
+test('两个系统的登录表单都渲染出来', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(APP_ORIGIN, { waitUntil: 'networkidle' })
+
+    const headings = await page.$$eval('.panel h2', (nodes) => nodes.map((node) => node.textContent))
+    assert.deepEqual(headings.sort(), ['云邮教学空间', '教务处'].sort())
+
+    assert.equal(await page.locator('.login-form input[type="text"]').count(), 2)
+    assert.equal(await page.locator('.login-form input[type="password"]').count(), 2)
+  } finally {
+    await page.close()
+  }
+})
+
+test('登录成功后显示姓名，localStorage 里只有 sessionId', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.route('**/api/ucloud/login', (route) => fulfill(route, { success: true, data: SESSION }))
+
+    await page.goto(APP_ORIGIN, { waitUntil: 'networkidle' })
+    await page.fill(`${firstPanel} input[type="text"]`, '2021001234')
+    await page.fill(`${firstPanel} input[type="password"]`, 'pw')
+    await page.click(`${firstPanel} button[type="submit"]`)
+
+    await page.waitForSelector(`${firstPanel} .logged-in`)
+    const who = await page.textContent(`${firstPanel} .who`)
+    assert.match(who, /张三/)
+    assert.match(who, /2021001234/)
+
+    // 关键断言：凭证不进前端存储
+    const stored = await page.evaluate(() => JSON.parse(localStorage.getItem('bupt-week-ucloud-auth')))
+    assert.deepEqual(Object.keys(stored).sort(), ['expiresAt', 'realName', 'sessionId', 'username'])
+    for (const [key, value] of Object.entries(stored)) {
+      const text = String(value)
+      for (const secret of ['pw', 'password', 'blade', 'Blade-Auth', 'access_token', 'refresh_token', 'token']) {
+        assert.equal(text.includes(secret), false, `${key} 里出现了 ${secret}`)
+      }
+    }
+  } finally {
+    await page.close()
+  }
+})
+
+test('登录失败时展示后端给的人话错误，不暴露 stage', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.route('**/api/ucloud/login', (route) =>
+      fulfill(route, { success: false, stage: 'cas-login', msg: '用户名或密码错误' }, 401),
+    )
+
+    await page.goto(APP_ORIGIN, { waitUntil: 'networkidle' })
+    await page.fill(`${firstPanel} input[type="text"]`, '2021001234')
+    await page.fill(`${firstPanel} input[type="password"]`, 'wrong')
+    await page.click(`${firstPanel} button[type="submit"]`)
+
+    await page.waitForSelector(`${firstPanel} .notice.error`)
+    const notice = await page.textContent(`${firstPanel} .notice.error`)
+    assert.match(notice, /用户名或密码错误/)
+    assert.equal(notice.includes('cas-login'), false, 'stage 不该透给用户')
+
+    assert.equal(await page.locator(`${firstPanel} .logged-in`).count(), 0)
+  } finally {
+    await page.close()
+  }
+})
+
+test('刷新页面后登录态保持', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.route('**/api/ucloud/login', (route) => fulfill(route, { success: true, data: SESSION }))
+    await page.route('**/api/ucloud/session', (route) => fulfill(route, { success: true, data: SESSION }))
+
+    await page.goto(APP_ORIGIN, { waitUntil: 'networkidle' })
+    await page.fill(`${firstPanel} input[type="text"]`, '2021001234')
+    await page.fill(`${firstPanel} input[type="password"]`, 'pw')
+    await page.click(`${firstPanel} button[type="submit"]`)
+    await page.waitForSelector(`${firstPanel} .logged-in`)
+
+    await page.reload({ waitUntil: 'networkidle' })
+    await page.waitForSelector(`${firstPanel} .logged-in`)
+    assert.match(await page.textContent(`${firstPanel} .who`), /张三/)
+  } finally {
+    await page.close()
+  }
+})
+
+test('会话已失效时刷新页面会被打回登录态', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(APP_ORIGIN)
+    await page.evaluate((session) => {
+      localStorage.setItem('bupt-week-ucloud-auth', JSON.stringify(session))
+    }, SESSION)
+
+    await page.route('**/api/ucloud/session', (route) =>
+      fulfill(route, { success: false, stage: 'ucloud-auth', msg: '云邮登录已过期，请重新登录' }, 401),
+    )
+
+    await page.reload({ waitUntil: 'networkidle' })
+
+    // restore() 失败后应回到未登录，且 localStorage 被清掉
+    await page.waitForSelector(`${firstPanel} .login-form`)
+    assert.equal(await page.locator(`${firstPanel} .logged-in`).count(), 0)
+    assert.equal(await page.evaluate(() => localStorage.getItem('bupt-week-ucloud-auth')), null)
+  } finally {
+    await page.close()
+  }
+})
+
+test('退出登录会调后端并清掉本地状态', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.route('**/api/ucloud/login', (route) => fulfill(route, { success: true, data: SESSION }))
+    await page.route('**/api/ucloud/logout', (route) => fulfill(route, { success: true }))
+
+    await page.goto(APP_ORIGIN, { waitUntil: 'networkidle' })
+    await page.fill(`${firstPanel} input[type="text"]`, '2021001234')
+    await page.fill(`${firstPanel} input[type="password"]`, 'pw')
+    await page.click(`${firstPanel} button[type="submit"]`)
+    await page.waitForSelector(`${firstPanel} .logged-in`)
+
+    await page.click(`${firstPanel} .logged-in button`)
+
+    await page.waitForSelector(`${firstPanel} .login-form`)
+    assert.equal(await page.evaluate(() => localStorage.getItem('bupt-week-ucloud-auth')), null)
+  } finally {
+    await page.close()
+  }
+})
+
+test('输入不合法时拦住，不发登录请求', async () => {
+  const page = await browser.newPage()
+  let loginCalls = 0
+  try {
+    await page.route('**/api/ucloud/login', (route) => {
+      loginCalls += 1
+      return fulfill(route, { success: true, data: SESSION })
+    })
+
+    await page.goto(APP_ORIGIN, { waitUntil: 'networkidle' })
+
+    // 完全空着：input 上的 required 拦住 submit。
+    await page.click(`${firstPanel} button[type="submit"]`)
+    await page.waitForTimeout(300)
+    assert.equal(loginCalls, 0, '空表单不该发请求')
+    assert.equal(await page.locator(`${firstPanel} .notice.error`).count(), 0)
+    assert.equal(await page.locator(`${firstPanel} .login-form`).count(), 1, '应仍停留在登录表单')
+
+    // 学号只填空白：v-model.trim 把它变成空串，同样被 required 拦住。
+    await page.fill(`${firstPanel} input[type="text"]`, '   ')
+    await page.fill(`${firstPanel} input[type="password"]`, 'pw')
+    await page.click(`${firstPanel} button[type="submit"]`)
+    await page.waitForTimeout(300)
+
+    assert.equal(loginCalls, 0, '空白学号不该发请求')
+    assert.equal(await page.locator(`${firstPanel} .login-form`).count(), 1, '应仍停留在登录表单')
+  } finally {
+    await page.close()
+  }
+})
+
+test('两个系统登录态互不影响', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.route('**/api/ucloud/login', (route) => fulfill(route, { success: true, data: SESSION }))
+    await page.route('**/api/jwgl/login', (route) =>
+      fulfill(route, {
+        success: true,
+        data: { sessionId: 'jw-1', username: '2021001234', expiresAt: Date.now() + 3600_000 },
+      }),
+    )
+
+    await page.goto(APP_ORIGIN, { waitUntil: 'networkidle' })
+
+    for (const [panel, path] of [
+      [firstPanel, '**/api/ucloud/login'],
+      [secondPanel, '**/api/jwgl/login'],
+    ]) {
+      await page.fill(`${panel} input[type="text"]`, '2021001234')
+      await page.fill(`${panel} input[type="password"]`, 'pw')
+      await page.click(`${panel} button[type="submit"]`)
+      await page.waitForSelector(`${panel} .logged-in`)
+    }
+
+    assert.equal(await page.locator('.logged-in').count(), 2)
+    const keys = await page.evaluate(() =>
+      Object.keys(localStorage)
+        .filter((key) => key.startsWith('bupt-week-'))
+        .sort(),
+    )
+    assert.deepEqual(keys, ['bupt-week-jwgl-auth', 'bupt-week-ucloud-auth'])
   } finally {
     await page.close()
   }

@@ -1,8 +1,10 @@
 <script setup>
 import { onMounted, ref } from 'vue'
 import { api } from './api/client.js'
+import { jwglAuth, ucloudAuth } from './composables/auth.js'
+import LoginPanel from './components/LoginPanel.vue'
 
-// 第 0 期唯一的界面：确认前端 → Vite 代理 → 后端 → JSON 形状这条链路是通的。
+// 第 1 期的界面：两个系统分别登录。课表和作业各走一套，凭证不通用。
 const state = ref('checking')
 const detail = ref('')
 
@@ -14,6 +16,9 @@ onMounted(async () => {
     state.value = 'error'
     detail.value = error.message
   }
+
+  // 刷新页面后恢复登录态。失效的会被 restore() 清掉，不会留一个假登录。
+  await Promise.all([ucloudAuth.restore(), jwglAuth.restore()])
 })
 </script>
 
@@ -28,9 +33,24 @@ onMounted(async () => {
       <span v-else>后端连接失败：{{ detail }}</span>
     </p>
 
+    <div class="panels">
+      <LoginPanel
+        :auth="ucloudAuth"
+        name-label="学号"
+        title="云邮教学空间"
+        hint="作业在这里。登录后才能看作业列表和下载附件。"
+      />
+      <LoginPanel
+        :auth="jwglAuth"
+        name-label="学号"
+        title="教务处"
+        hint="课表在这里。和云邮是两套系统，密码相同但要分别登录。"
+      />
+    </div>
+
     <p class="hint">
-      尚未实现登录、课表与作业。实施顺序见
-      <code>docs/roadmap.md</code>。
+      课表和作业来自两个不同系统，凭证互不通用，所以需要分别登录。
+      实施进度见 <code>docs/roadmap.md</code>。
     </p>
   </main>
 </template>

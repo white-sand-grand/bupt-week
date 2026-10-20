@@ -105,6 +105,21 @@ npm run dev             # 前端 → 127.0.0.1:5173，/api 代理到 8787
 
 开发时前端与后端**同源**，不需要配 CORS。后端默认只绑 `127.0.0.1`，不暴露到局域网。
 
+### 本机走了代理的话
+
+**Node 的 `fetch` 默认不读 `HTTP_PROXY`。** 如果开发机设了代理环境变量，后端连学校会直接
+`ETIMEDOUT`——而 `curl` 是能通的，很容易误判成学校挂了。
+
+两个 npm script 已带上 `NODE_USE_ENV_PROXY=1`（没有代理时它是空动作，无害）。
+这个变量**只有 Node 24+ 认识**，Node 20/22 会被静默忽略；老版本要么升 Node，
+要么自己用支持代理的方式起服务。
+
+Cloudflare Workers 不受影响——它的 `fetch` 不走系统代理，直连。
+
+> 副作用：`VAR=value cmd` 这种写在 script 里的形式在 Windows `cmd` 下不成立。
+> Windows 上请用 PowerShell 设 `$env:NODE_USE_ENV_PROXY=1` 后再手动跑命令，
+> 或者直接升到 Node 24 并用 WSL。
+
 ## 6. 凭证与会话的运维事实
 
 | 环境 | 会话存哪 | 重启后 | 多实例 |
@@ -146,6 +161,7 @@ chromium 装不上的机器上这条会直接报错并提示安装命令，不�
 |---|---|
 | 前端白屏，Console 报 CORS | `CORS_ORIGINS` 是否含路径 / 是否少了协议 |
 | 登录一直失败，stage 在 `cas-get` | 校园网能否直连 `auth.bupt.edu.cn` |
+| 报 `cas-connect` 且提到代理 | 开发机走了代理但 Node 的 fetch 不读它，见第 5 节 |
 | 能登录但课表空 | 教务处会话过期，重新登录 |
 | 作业列表空，课表正常 | 云邮 token 过期且续期失败 |
 | 跳转按钮打开了登录页 | 用户浏览器没有云邮会话，属预期，登一次 |

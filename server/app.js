@@ -3,6 +3,7 @@ import { ApiError } from './http.js'
 import { backendCors } from './cors.js'
 import { mountProxyRoutes } from './routes/proxy.js'
 import { createApiRoutes } from './routes/api.js'
+import { createAuthRoutes } from './routes/auth.js'
 
 /**
  * 后端应用工厂。
@@ -26,9 +27,10 @@ export function createBackend({ getSessionStore = null, allowedOrigins = [] } = 
     c.json({ success: true, data: { ok: true, now: new Date().toISOString() } }),
   )
 
-  // 业务接口依赖会话存储，没注入就不挂——而不是挂上去每次都 401。
+  // 业务接口与会话都依赖存储，没注入就不挂——而不是挂上去每次都 401。
   if (getSessionStore) {
     app.route('/api', createApiRoutes({ getSessionStore }))
+    app.route('/api', createAuthRoutes({ getSessionStore }))
   }
 
   mountProxyRoutes(app, { allowedOrigins })

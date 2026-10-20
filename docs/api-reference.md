@@ -463,7 +463,9 @@ userAccount=<学号>&userPassword=&encoded=<encoded>
 encoded = encodeInp(username) + '%%%' + encodeInp(password)
 ```
 
-`encodeInp` 是一个**自定义 base64 变体**（MYUCLOUD 注释写明是从 Python 版 `auto_evalued` 移植的）：字符集是标准 base64 的 `A-Za-z0-9+/=`，但每 3 字节一组的 padding 处理与标准 base64 不同。**直接抄 MYUCLOUD 的实现，不要自己重写**，抄错的表现是静默登录失败，很难查。
+`encodeInp` 从 MYUCLOUD 的 Python 版 `auto_evalued` 移植。**实测（2026-10-20）它就是一个手写的标准 base64**——65 个字符的 key 只是为了把下标 64 映射到 `=`，位运算与标准算法一致，对 ASCII 输入与 `Buffer.toString('base64')` 完全相同。唯一差别是输入解释：按 UTF-16 code unit 逐字节走，而 Buffer 按 UTF-8。
+
+**不要重写、不要"修正"它。** 学校那套就是要这个行为，改动一个字符就可能静默登录失败。`tests/encode-inp.test.js` 里用「与标准 base64 完全一致」来抓转录错误。
 
 ```js
 function encodeInp(value) {

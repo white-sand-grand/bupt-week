@@ -52,7 +52,7 @@ GitHub Pages（静态）                 Cloudflare Workers（Hono）
 
 | 数据 | 来源系统 | 登录方式 |
 |---|---|---|
-| **课表** | `jwgl.bupt.edu.cn`（教务处） | 自定义 base64 变体编码后 POST 到 `/jsxsd/xk/LoginToXk`，全程靠 Cookie |
+| **课表** | `jwgl.bupt.edu.cn`（教务处） | 手写 base64 编码后 POST 到 `/jsxsd/xk/LoginToXk`，全程靠 Cookie |
 | **作业** | `ucloud.bupt.edu.cn`（云邮教学空间） | CAS → `ticket` → OAuth `access_token`，Bearer 模式 |
 
 两边的凭证互不通用，**必须分别登录**。前端用两个独立的登录态，任一侧过期只影响对应功能，不级联。
@@ -108,17 +108,32 @@ npm run dev             # → http://127.0.0.1:5173
 | 附件下载接口 `POST /api/ucloud/resource/download` | ✅ |
 | 前端 `downloadResource(resourceId, filename)` | ✅ |
 | 挂到作业卡片上 | ⬜ 等第 3 期作业列表 |
+| 云邮登录（CAS → ticket → OAuth） | ✅ |
+| 教务处登录（`encodeInp` + Cookie 罐） | ✅ |
+| 登录/续期/退出接口（两个系统各一套） | ✅ |
+| 前端登录表单与登录态持久化 | ✅ |
+| token 静默续期（`access_token` 约 2 小时） | ✅ |
 
-45 个接口测试 + 6 个浏览器测试全绿，Node 与 Workers 两条入口都验证过。
-浏览器侧验过的包括：Vue 应用真的挂载、下载落盘且文件名是附件名、CORS 放行与拦截。
+102 个接口测试 + 14 个浏览器测试全绿，Node 与 Workers 两条入口都验证过。
+浏览器侧验过的包括：Vue 应用真的挂载、下载落盘且文件名是附件名、CORS 放行与拦截、
+登录态在刷新后保持、localStorage 里只有 sessionId。
 
-**尚未实现**：登录、课表、作业列表。这三项在第 1、2、3 期，顺序见 [`docs/roadmap.md`](docs/roadmap.md)。
+**尚未实现**：课表（第 2 期）、作业列表（第 3 期）。顺序见 [`docs/roadmap.md`](docs/roadmap.md)。
+
+### 还没能验证的
+
+- **真实学号密码登录两个系统。** 我用不存在的学号打过真的 CAS，拿到了
+  `Invalid credentials.` + `stage: cas-login`，说明整条链路是通的；但**成功**
+  登录需要你的凭证。教务处上游（`jwgl.bupt.edu.cn`）从我这台机器不可达，
+  需要在校园网内试。
+- **`grant_type=password` 能否直连**（第 0 期实验 A）。当前走的是 CAS 三步，
+  MYUCLOUD 已验证过这条路。
 
 附件下载的链路与为什么必须经服务端，见 [`docs/api-reference.md`](docs/api-reference.md) 2.6–2.8 节。
 
 ```sh
-npm test            # 45 个接口/单元测试，不需要浏览器
-npm run test:browser # 6 个浏览器测试，需要 chromium
+npm test            # 102 个接口/单元测试，不需要浏览器
+npm run test:browser # 14 个浏览器测试，需要 chromium
 npm run build       # 前端构建，产物在 dist/（相对路径，适配 Pages）
 npx wrangler dev    # 本地 Workers 运行时，与 Node 入口共用同一份 server/
 ```

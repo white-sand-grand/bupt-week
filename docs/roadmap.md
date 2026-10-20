@@ -21,7 +21,7 @@
 
 ### 实测结果
 
-- `npm test` 45 个测试全绿
+- `npm test` 102 个测试全绿
 - `npm run server` 与 `npx wrangler dev` **同一份 `server/` 代码**，无环境分支
 - `vite build` 通过，产物用相对路径（Pages 子路径部署可用）
 - `/file` 代理实测打到 `fileucloud.bupt.edu.cn`，S3 返回 `NoSuchKey`；上游 CORS 头已剥除、本后端 CORS 头已补上
@@ -48,30 +48,39 @@
 
 ---
 
-## 第 1 期：两个系统的登录
+## 第 1 期：两个系统的登录 — ✅ 已完成（真实凭证待用户验证）
 
 **目标**：前端能登进去，凭证安全落在服务端。
 
-### 任务
+### 已完成
 
 1. `services/ucloud.js`：CAS 三步登录（实验 A 成功则加密码直连作为首选，CAS 作 fallback）
 2. `services/jwgl.js`：`encodeInp` + 三步 Cookie 罐登录（从 MYUCLOUD 原样移植）
 3. `POST /api/ucloud/login`、`/api/jwgl/login`、`session`、`logout`
-4. 前端 `LoginPanel.vue` + `useJwglAuth` / `useUcloudAuth`
+4. 前端 `LoginPanel.vue` + `src/composables/auth.js`（导出 `jwglAuth` / `ucloudAuth` 两个实例）
 5. 错误信息带上 `stage`，前端直接展示 `msg`
+
+### 实测结果
+
+- 102 个接口测试 + 14 个浏览器测试全绿
+- **CAS 流程打过真实上游**：`cas:get` 200、`cas:post` 401，返回
+  `Invalid credentials.` + `stage: cas-login`——链路是通的，只差有效凭证
+- Node 与 Workers 两条入口行为完全一致（含错误码与 stage）
+- 服务端日志确认脱敏：全文无密码、无 ticket、无 execution 值
 
 ### 完成判据
 
-- [ ] 用真实学号密码，两个系统都能登录成功
-- [ ] 登错时的错误信息能让人看懂（不是 `fetch failed`）
-- [ ] 刷新页面后登录态保持
-- [ ] **前端 localStorage 里只有不透明 sessionId，没有密码、没有 token**（写测试断言）
-- [ ] 服务端日志里密码和 token 都以 redact 形式出现（只留长度和前后 10 字符）
-- [ ] 教务处 `encodeInp` 用真实账号验证过（抄错会静默失败）
+- [x] 登错时的错误信息能让人看懂（不是 `fetch failed`）——网络错误按
+      `ECONNREFUSED`/`ETIMEDOUT`/`ENOTFOUND` 等翻成中文，并提示代理问题
+- [x] 刷新页面后登录态保持（浏览器测试）
+- [x] **前端 localStorage 里只有不透明 sessionId，没有密码、没有 token**（写测试断言）
+- [x] 服务端日志里密码和 token 都以 redact 形式出现（只留长度和前后 10 字符）
+- [ ] 用真实学号密码，两个系统都能登录成功 —— **需要你的凭证**
+- [ ] 教务处 `encodeInp` 用真实账号验证过（抄错会静默失败）—— 需要校园网
 
 ### 注意
 
-`encodeInp` 是自定义 base64 变体，**照抄 MYUCLOUD，不要重写**。验证方法是真实登录一次，没有捷径。
+`encodeInp` 看着像自定义变体，**实测就是手写的标准 base64**（65 字符 key 只是让下标 64 映射到 `=`）。照抄 MYUCLOUD，不要重写。真正的验收只能靠真实账号登录一次，没有捷径。
 
 ---
 
@@ -142,7 +151,7 @@
 | 401 形状 | 无会话调下载接口，断言 `success/stage/msg` |
 
 两个关键断言都做过**反证**：把 `anchor.download` 删掉，文件名测试失败；把 CORS 头全去掉，
-放行测试失败。还原后 6/6 通过，文件字节一致。
+放行测试失败。还原后 14/14 通过，文件字节一致。
 
 载体页 `tests/browser/fixtures/download-harness.html` import 的是 `src/api/files.js` 里
 真实的 `downloadFile`，不是复制品。

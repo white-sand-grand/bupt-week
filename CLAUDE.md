@@ -26,8 +26,11 @@ BUPT 学生用的个人工具，只做三件事：查课表、看作业、给交
 
 - `fetch()` 返回的 `Response`，其 `headers` 是 **immutable** 的，就地 delete/set 会抛 `TypeError: immutable`。改头必须重建 `Response`，并且丢掉 `content-length` / `content-encoding`。
 - Hono 里 handler 返回**原始 `Response`** 时，中间件用 `c.header()` 设的头会被丢掉。需要自己补。
-- 教务处登录的 `encodeInp` 是自定义 base64 变体，**照抄 MYUCLOUD 不要重写**。抄错的表现是静默登录失败，极难查。
+- 教务处登录的 `encodeInp` 看着像自定义变体，**实测就是手写的标准 base64**（65 字符 key 只是让下标 64 映射到 `=`）。照抄 MYUCLOUD 不要重写——改一个字符就可能静默登录失败，极难查。
 - Vite dev server 开了 SPA fallback：**不存在的文件会返回 `index.html` 且状态码 200**。想测 404 要走 `/api` 代理打到后端。
+- **Node 的 `fetch` 默认不读 `HTTP_PROXY`。** 本机若走了代理，后端连学校会直接 `ETIMEDOUT`。
+  `npm run server` / `npm run dev` 已带上 `NODE_USE_ENV_PROXY=1`（无代理时是空动作，需 Node 24）。
+  Workers 不受影响——它的 fetch 直连。
 
 ## 交作业跳转链接
 
@@ -47,8 +50,8 @@ BUPT 学生用的个人工具，只做三件事：查课表、看作业、给交
 ## 验证
 
 ```sh
-npm test            # 45 个接口/单元测试，不需要浏览器
-npm run test:browser # 6 个浏览器测试，需要 chromium
+npm test            # 102 个接口/单元测试，不需要浏览器
+npm run test:browser # 14 个浏览器测试，需要 chromium
 npm run build       # 前端构建，产物相对路径（Pages 子路径部署）
 ```
 
