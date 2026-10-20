@@ -1,0 +1,44 @@
+import { Hono } from 'hono'
+import { ApiError } from './http.js'
+import { backendCors } from './cors.js'
+import { mountProxyRoutes } from './routes/proxy.js'
+import { createApiRoutes } from './routes/api.js'
+
+/**
+ * 后端应用工厂。
+ *
+ * Node 入口和 Workers 入口调用的是同一个函数，代码不分支。
+ * 环境差异（文件系统 / KV / 监听端口）全部由入口注入。
+ *
+ * @param {{ getSessionStore?: object, allowedOrigins?: string[] }} options
+ */
+export function createBackend({ getSessionStore = null, allowedOrigins = [] } = {}) {
+  const app = new Hono()
+
+  app.use('*', backendCors(allowedOrigins))
+  app.use('/api/*', async (c, next) => {
+    // 接口响应一律不缓存，避免代理层把登录态相关的数据缓存下来。
+    c.header('Cache-Control', 'no-store')
+    await next()
+  })
+
+  app.get('/api/health', (c) =>
+    c.json({ success: true, data: { ok: true, now: new Date().toISOString() } }),
+  )
+
+  // 业务接口依赖会话存储，没注入就不挂——而不是挂上去每次都 401。
+  if (getSessionStore) {
+    app.route('/api', createApiRoutes({ getSessionStore }))
+  }
+
+  mountProxyRoutes(app, { allowedOrigins })
+
+  app.notFound((c) => c.json({ success: false, msg: '接口不存在' }, 404))
+  app.onError((error, c) => {
+    if (error instanceof ApiError) return c.json(error.body, error.status)
+    console.error('[backend] 未处理的错误', error)
+    return c.json({ success: false, msg: error.message || '请求失败' }, 500)
+  })
+
+  return app
+}

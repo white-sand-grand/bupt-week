@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>下载链路验证</title>
+  </head>
+  <body>
+    <!--
+      浏览器验证用的载体页。它 import 的是 src/api/files.js 里真实的 downloadFile，
+      不是复制品——否则测的就是抄来的代码，没有意义。
+      Vite dev server 会提供 import.meta.env，所以 client.js 能正常求值。
+    -->
+    <h1>下载链路验证</h1>
+    <button id="download" type="button">下载</button>
+    <p id="result">待触发</p>
+
+    <script type="module">
+      import { downloadFile } from '/src/api/files.js'
+
+      const params = new URLSearchParams(location.search)
+      const result = document.getElementById('result')
+
+      document.getElementById('download').addEventListener('click', async () => {
+        result.textContent = '下载中'
+        try {
+          await downloadFile(params.get('url'), params.get('name'))
+          result.textContent = 'ok'
+        } catch (error) {
+          result.textContent = `error: ${error.message}`
+        }
+      })
+    </script>
+  </body>
+</html>

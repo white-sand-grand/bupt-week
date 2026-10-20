@@ -1,0 +1,17 @@
+name = "bupt-week"
+main = "server/entries/worker.js"
+compatibility_date = "2025-01-01"
+
+# 本项目的 server/ 只使用 Web 标准 API（fetch / Headers / crypto.randomUUID），
+# 不引入 node:fs，因此不需要 nodejs_compat。
+# 会话存储通过 app.js 的 getSessionStore 注入，这里注入 KV 实现。
+
+[vars]
+# 允许跨域访问的前端来源，多个用逗号分隔。改成你自己的 Pages 地址。
+CORS_ORIGINS = "https://example.github.io"
+
+# 会话命名空间：先执行 `npx wrangler kv namespace create SESSIONS`，
+# 把返回的 id 填到下面，取消注释。
+# [[kv_namespaces]]
+# binding = "SESSIONS"
+# id = ""

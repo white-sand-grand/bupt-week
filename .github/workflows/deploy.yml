@@ -1,0 +1,52 @@
+name: deploy
+
+# 前端发布到 GitHub Pages。
+# 注意：本 workflow 在 src/ 与 server/ 落地后才能跑通（当前仓库只有文档和配置）。
+# 后端部署不走 CI，手动执行 `npm run deploy:worker`。
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      # 仓库初期没有 package-lock.json，用 install；首次提交 lockfile 后改回 npm ci
+      - run: npm install
+      # 测试用例在第 0 期落地，加上测试后取消下一行注释
+      # - run: npm test
+      # 后端地址只写来源，不带路径，例如 https://bupt-week.<subdomain>.workers.dev
+      - name: Build frontend
+        run: npm run build
+        env:
+          VITE_BACKEND_URL: ${{ vars.VITE_BACKEND_URL }}
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

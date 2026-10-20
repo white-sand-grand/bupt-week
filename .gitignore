@@ -1,0 +1,34 @@
+# 依赖
+node_modules/
+
+# 构建产物
+dist/
+.vite/
+
+# ── 本地凭证与会话 ────────────────────────────────────────────
+# FileSessionStore 把上游 Cookie / token 写进 .sessions.local，
+# 写的时候先用 .sessions.local.tmp 落盘再 rename。两个都必须挡住，
+# 漏掉 .tmp 等于把会话凭证提交上去。
+*.local
+*.local.tmp
+
+# Cloudflare 的本地密钥与 .env
+.dev.vars
+.env
+.env.*
+
+# Cloudflare Workers 本地状态（含 KV/D1/R2 的 sqlite 文件）
+.wrangler/
+
+# 本地 agent 配置（团队共享的 settings.json 不受影响）
+.claude/settings.local.json
+
+# 日志与系统垃圾
+*.log
+npm-debug.log*
+.DS_Store
+
+# 编辑器
+.idea/
+.vscode/
+*.swp
