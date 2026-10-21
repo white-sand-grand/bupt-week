@@ -2,110 +2,120 @@ import { computed, ref } from 'vue'
 import {
   checkJwglSession,
   checkUcloudSession,
-  loginJwgl,
-  loginUcloud,
+  login,
   logoutJwgl,
   logoutUcloud,
 } from '../api/auth.js'
 
+const UCLOUD_KEY = 'bupt-week-ucloud-auth'
+const JWGL_KEY = 'bupt-week-jwgl-auth'
+
 /**
- * 登录态存储。
+ * 统一登录态。
  *
- * localStorage 里只放 sessionId、学号、过期时间——**不放密码，不放 token**。
- * tests/ 里有断言守着这条。
- *
- * 两个系统各一个实例，互不影响：任一侧过期只禁用对应功能，不级联。
+ * 对外是一个登录态（一个学号密码框），内部仍是两个系统的独立凭证——
+ * 任一侧过期只禁用对应功能，不级联。localStorage 里只放 sessionId、学号、
+ * 过期时间：**不放密码，不放 token**，tests/ 里有断言守着这条。
  */
-function createAuthStore({ storageKey, login, check, logout }) {
-  const credential = ref(read())
+const ucloud = ref(read(UCLOUD_KEY))
+const jwgl = ref(read(JWGL_KEY))
 
-  function read() {
-    try {
-      const saved = JSON.parse(localStorage.getItem(storageKey) || 'null')
-      return saved && typeof saved.sessionId === 'string' && saved.sessionId && saved.expiresAt > Date.now()
-        ? saved
-        : null
-    } catch {
-      return null
-    }
-  }
-
-  function write(value) {
-    credential.value = value
-    try {
-      if (value) localStorage.setItem(storageKey, JSON.stringify(value))
-      else localStorage.removeItem(storageKey)
-    } catch {
-      // 隐私模式下写不进去，当前页面仍可用，刷新后要重登
-    }
-  }
-
-  // 多标签页同步：一个标签页退出，其他标签页跟着退出
-  if (typeof window !== 'undefined') {
-    window.addEventListener('storage', (event) => {
-      if (event.key === storageKey || event.key === null) credential.value = read()
-    })
-  }
-
-  return {
-    sessionId: computed(() => credential.value?.sessionId || ''),
-    username: computed(() => credential.value?.username || ''),
-    realName: computed(() => credential.value?.realName || ''),
-    loggedIn: computed(() => Boolean(credential.value)),
-
-    async signIn(username, password) {
-      const data = await login(username, password)
-      write({
-        sessionId: data.sessionId,
-        username: data.username,
-        realName: data.realName || '',
-        expiresAt: data.expiresAt,
-      })
-      return data
-    },
-
-    /** 校验并续期。失效时清掉本地状态，让调用方好知道要重新登。 */
-    async restore() {
-      if (!credential.value) return false
-      try {
-        const data = await check(credential.value.sessionId)
-        write({
-          sessionId: data.sessionId,
-          username: data.username,
-          realName: data.realName || '',
-          expiresAt: data.expiresAt,
-        })
-        return true
-      } catch {
-        write(null)
-        return false
-      }
-    },
-
-    async signOut() {
-      const sessionId = credential.value?.sessionId
-      write(null)
-      if (sessionId) {
-        try {
-          await logout(sessionId)
-        } catch {
-          // 本地已经退出，远程凭证仍受有效期限制
-        }
-      }
-    },
+function read(key) {
+  try {
+    const saved = JSON.parse(localStorage.getItem(key) || 'null')
+    return saved && typeof saved.sessionId === 'string' && saved.sessionId && saved.expiresAt > Date.now()
+      ? saved
+      : null
+  } catch {
+    return null
   }
 }
 
-export const ucloudAuth = createAuthStore({
-  storageKey: 'bupt-week-ucloud-auth',
-  login: loginUcloud,
-  check: checkUcloudSession,
-  logout: logoutUcloud,
-})
+function write(key, value) {
+  try {
+    if (value) localStorage.setItem(key, JSON.stringify(value))
+    else localStorage.removeItem(key)
+  } catch {
+    // 隐私模式下写不进去，当前页面仍可用，刷新后要重登
+  }
+}
 
-export const jwglAuth = createAuthStore({
-  storageKey: 'bupt-week-jwgl-auth',
-  login: loginJwgl,
-  check: checkJwglSession,
-  logout: logoutJwgl,
-})
+// 多标签页同步：一个标签页退出，其他标签页跟着退出
+if (typeof window !== 'undefined') {
+  window.addEventListener('storage', (event) => {
+    if (event.key === UCLOUD_KEY || event.key === null) ucloud.value = read(UCLOUD_KEY)
+    if (event.key === JWGL_KEY || event.key === null) jwgl.value = read(JWGL_KEY)
+  })
+}
+
+export const auth = {
+  loggedIn: computed(() => Boolean(ucloud.value || jwgl.value)),
+  username: computed(() => ucloud.value?.username || jwgl.value?.username || ''),
+  realName: computed(() => ucloud.value?.realName || ''),
+  /** 云邮（作业）是否可用 */
+  ucloudReady: computed(() => Boolean(ucloud.value)),
+  /** 教务处（课表）是否可用 */
+  jwglReady: computed(() => Boolean(jwgl.value)),
+
+  async signIn(username, password) {
+    const data = await login(username, password)
+
+    ucloud.value = {
+      sessionId: data.ucloud.sessionId,
+      username: data.ucloud.username,
+      realName: data.ucloud.realName || '',
+      expiresAt: data.expiresAt,
+    }
+    jwgl.value = {
+      sessionId: data.jwgl.sessionId,
+      username: data.jwgl.username,
+      expiresAt: data.expiresAt,
+    }
+    write(UCLOUD_KEY, ucloud.value)
+    write(JWGL_KEY, jwgl.value)
+    return data
+  },
+
+  /** 校验并续期。失效的一侧会被清掉，不会留一个假登录。 */
+  async restore() {
+    const results = await Promise.allSettled([
+      ucloud.value ? checkUcloudSession(ucloud.value.sessionId) : Promise.resolve(null),
+      jwgl.value ? checkJwglSession(jwgl.value.sessionId) : Promise.resolve(null),
+    ])
+
+    const [ucloudResult, jwglResult] = results
+
+    if (ucloudResult.status === 'fulfilled' && ucloudResult.value) {
+      ucloud.value = { ...ucloud.value, ...ucloudResult.value }
+      write(UCLOUD_KEY, ucloud.value)
+    } else if (ucloudResult.status === 'rejected') {
+      ucloud.value = null
+      write(UCLOUD_KEY, null)
+    }
+
+    if (jwglResult.status === 'fulfilled' && jwglResult.value) {
+      jwgl.value = { ...jwgl.value, ...jwglResult.value }
+      write(JWGL_KEY, jwgl.value)
+    } else if (jwglResult.status === 'rejected') {
+      jwgl.value = null
+      write(JWGL_KEY, null)
+    }
+
+    return Boolean(ucloud.value || jwgl.value)
+  },
+
+  async signOut() {
+    const ucloudId = ucloud.value?.sessionId
+    const jwglId = jwgl.value?.sessionId
+    ucloud.value = null
+    jwgl.value = null
+    write(UCLOUD_KEY, null)
+    write(JWGL_KEY, null)
+
+    // 本地已经退出；远程注销失败也无妨，凭证仍受有效期限制
+    await Promise.allSettled([
+      ucloudId ? logoutUcloud(ucloudId) : Promise.resolve(),
+      jwglId ? logoutJwgl(jwglId) : Promise.resolve(),
+    ])
+  },
+}

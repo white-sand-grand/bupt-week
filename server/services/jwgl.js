@@ -194,3 +194,55 @@ export async function validateJwglSession(cookies, fetchImpl = fetch) {
 
   return mergeCookies(cookies, parseSetCookies(response))
 }
+
+// ── CAS 统一登录 ────────────────────────────────────────────────────────────
+
+/**
+ * 用 CAS ticket 登录教务处。
+ *
+ * jwgl.bupt.edu.cn 是注册过的 CAS service（实测，见 docs/unified-login-plan.md），
+ * 所以一次 CAS 认证可以同时服务云邮和教务——这就是"统一登录"。
+ *
+ * **收 ticket 的确切路径是【待验证】**：按 `/?ticket=` 猜，即让教务系统在根路径
+ * 自行校验并建立会话。jwgl.bupt.edu.cn 从开发机不可达，验不了，需要在校园网内试。
+ * 走不通就走上面的 loginJwgl（encodeInp 老登录），两条路按可用性切换。
+ *
+ * @param {string} ticket CAS 签发的一次性票据
+ * @returns {Promise<{cookies: string}>}
+ */
+export async function loginJwglWithTicket(ticket, fetchImpl = fetch) {
+  if (!ticket) {
+    throw new ApiError(400, '缺少 CAS ticket')
+  }
+
+  const url = `${JWGL_BASE}/?ticket=${encodeURIComponent(ticket)}`
+
+  let first
+  try {
+    first = await fetchImpl(url, {
+      headers: { 'User-Agent': 'Mozilla/5.0' },
+      redirect: 'manual',
+    })
+  } catch {
+    throw new ApiError(502, { stage: 'jwgl-connect', msg: '连不上教务系统，请检查网络' })
+  }
+
+  let cookies = parseSetCookies(first)
+
+  // 教务可能先 302 到某个落地页，跟着走一次把 Cookie 收全
+  const location = first.headers.get('location') || ''
+  if (location && first.status >= 300 && first.status < 400) {
+    try {
+      const next = await fetchImpl(new URL(location).toString(), {
+        headers: buildHeaders(cookies, { 'User-Agent': 'Mozilla/5.0' }),
+        redirect: 'manual',
+      })
+      cookies = mergeCookies(cookies, parseSetCookies(next))
+    } catch {
+      // 跟不动就算了，下面用已有 Cookie 验证
+    }
+  }
+
+  const verified = await validateJwglSession(cookies, fetchImpl)
+  return { cookies: verified }
+}

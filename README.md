@@ -46,16 +46,18 @@ GitHub Pages（静态）                 Cloudflare Workers（Hono）
 
 ---
 
-## 两个系统、两套登录
+## 两个系统，一套登录
 
 这是本项目最重要的架构事实，一开始就要接受：
 
-| 数据 | 来源系统 | 登录方式 |
+| 数据 | 来源系统 | 凭证形式 |
 |---|---|---|
-| **课表** | `jwgl.bupt.edu.cn`（教务处） | 手写 base64 编码后 POST 到 `/jsxsd/xk/LoginToXk`，全程靠 Cookie |
-| **作业** | `ucloud.bupt.edu.cn`（云邮教学空间） | CAS → `ticket` → OAuth `access_token`，Bearer 模式 |
+| **课表** | `jwgl.bupt.edu.cn`（教务处 PC 版） | 会话 Cookie |
+| **作业** | `ucloud.bupt.edu.cn`（云邮教学空间） | OAuth `access_token` + `refresh_token` |
 
-两边的凭证互不通用，**必须分别登录**。前端用两个独立的登录态，任一侧过期只影响对应功能，不级联。
+两个系统是不同的服务、凭证互不通用，但**共用同一套统一身份认证（CAS）**——
+实测两者都是注册过的 CAS service。所以前端只有一个登录表单，一次认证分别取两个
+service 的 ticket。任一侧过期只影响对应功能，不级联。
 
 ---
 
@@ -108,13 +110,13 @@ npm run dev             # → http://127.0.0.1:5173
 | 附件下载接口 `POST /api/ucloud/resource/download` | ✅ |
 | 前端 `downloadResource(resourceId, filename)` | ✅ |
 | 挂到作业卡片上 | ⬜ 等第 3 期作业列表 |
-| 云邮登录（CAS → ticket → OAuth） | ✅ |
-| 教务处登录（`encodeInp` + Cookie 罐） | ✅ |
-| 登录/续期/退出接口（两个系统各一套） | ✅ |
-| 前端登录表单与登录态持久化 | ✅ |
+| **统一登录**（一个表单，一次认证登两个系统） | ✅ |
+| CAS SSO 双 ticket（一次认证，两个 service） | ✅ |
+| 教务处 CAS 入口（ticket → 会话） | ⬜ 端点待校园网验证，已配 `encodeInp` 回退 |
+| 企业微信 / 微信内自动识别 | ✅ 骨架 + 实测跳转，回流后两步待你在微信里验 |
 | token 静默续期（`access_token` 约 2 小时） | ✅ |
 
-102 个接口测试 + 14 个浏览器测试全绿，Node 与 Workers 两条入口都验证过。
+124 个接口测试 + 14 个浏览器测试全绿，Node 与 Workers 两条入口都验证过。
 浏览器侧验过的包括：Vue 应用真的挂载、下载落盘且文件名是附件名、CORS 放行与拦截、
 登录态在刷新后保持、localStorage 里只有 sessionId。
 
@@ -132,7 +134,7 @@ npm run dev             # → http://127.0.0.1:5173
 附件下载的链路与为什么必须经服务端，见 [`docs/api-reference.md`](docs/api-reference.md) 2.6–2.8 节。
 
 ```sh
-npm test            # 102 个接口/单元测试，不需要浏览器
+npm test            # 124 个接口/单元测试，不需要浏览器
 npm run test:browser # 14 个浏览器测试，需要 chromium
 npm run build       # 前端构建，产物在 dist/（相对路径，适配 Pages）
 npx wrangler dev    # 本地 Workers 运行时，与 Node 入口共用同一份 server/
@@ -151,6 +153,7 @@ npx wrangler dev    # 本地 Workers 运行时，与 Node 入口共用同一份 
 | [`docs/api-reference.md`](docs/api-reference.md) | 逆向验证过的全部接口与深链，**标注了哪些是实测、哪些待验证** |
 | [`docs/deployment.md`](docs/deployment.md) | GitHub Pages + Cloudflare Workers 部署，含 KV 会话存储 |
 | [`docs/roadmap.md`](docs/roadmap.md) | 分期实施计划与每期验收标准 |
+| [`docs/unified-login-plan.md`](docs/unified-login-plan.md) | 统一登录与企业微信登录的调研结论与方案 |
 
 ## 参考实现
 

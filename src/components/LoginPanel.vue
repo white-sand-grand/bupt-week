@@ -1,23 +1,44 @@
 <script setup>
-import { ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
+import { wecomStartUrl } from '../api/auth.js'
 
 const props = defineProps({
-  title: { type: String, required: true },
-  hint: { type: String, default: '' },
   auth: { type: Object, required: true },
-  nameLabel: { type: String, default: '学号' },
 })
+
+// 在微信内置浏览器里打开时，企业微信身份可以被自动识别，无需输学号密码。
+//  MicroMessenger 是微信 webview 的 UA 标识；企业微信的 UA 也带它。
+const inWechat = computed(() => /MicroMessenger/i.test(navigator.userAgent))
 
 const username = ref('')
 const password = ref('')
 const busy = ref(false)
 const error = ref('')
+const notice = ref('')
+
+// 企业微信流程结束后会带参数跳回来，把结果展示出来
+onMounted(() => {
+  const hash = new URLSearchParams(location.hash.slice(1))
+  const wecom = hash.get('wecom')
+  const failure = hash.get('error')
+
+  if (wecom === 'ok') {
+    props.auth.restore()
+    notice.value = '已通过企业微信登录'
+  } else if (failure?.startsWith('wecom-')) {
+    error.value = {
+      'wecom-cancelled': '企业微信登录未完成',
+      'wecom-connect': '连不上统一认证服务，请稍后重试',
+      'wecom-no-ticket': '企业微信登录未能完成，请改用学号密码',
+    }[failure] || '企业微信登录失败'
+  }
+
+  // 清掉 hash，避免刷新时重复提示
+  if (wecom || failure) history.replaceState(null, '', location.pathname + location.search)
+})
 
 async function submit() {
   error.value = ''
-
-  // 空值由 input 上的 required 拦住；v-model.trim 会把纯空白变成空，同样被拦住。
-  // 所以这里不再重复判一遍空——那条分支从 UI 根本走不到。
   busy.value = true
   try {
     await props.auth.signIn(username.value, password.value)
@@ -34,36 +55,48 @@ async function submit() {
 <template>
   <section class="panel">
     <header class="panel-head">
-      <h2>{{ title }}</h2>
+      <h2>登录</h2>
       <span v-if="auth.loggedIn.value" class="badge badge-ok">已登录</span>
     </header>
 
-    <p v-if="hint" class="hint">{{ hint }}</p>
+    <p class="hint">
+      课表和作业共用同一套统一身份认证，<strong>登录一次即可</strong>。
+    </p>
 
     <div v-if="auth.loggedIn.value" class="logged-in">
       <p class="who">
         {{ auth.realName.value || auth.username.value }}
-        <span class="muted">（{{ nameLabel }} {{ auth.username.value }}）</span>
+        <span class="muted">（{{ auth.username.value }}）</span>
       </p>
       <button class="button-secondary" type="button" @click="auth.signOut()">退出登录</button>
     </div>
 
-    <form v-else class="login-form" @submit.prevent="submit">
-      <label>
-        <span>{{ nameLabel }}</span>
-        <input v-model.trim="username" type="text" autocomplete="username" :disabled="busy" required />
-      </label>
-      <label>
-        <span>密码</span>
-        <input v-model="password" type="password" autocomplete="current-password" :disabled="busy" required />
-      </label>
-
+    <template v-else>
+      <p v-if="notice" class="notice success" role="status">{{ notice }}</p>
       <p v-if="error" class="notice error" role="alert">{{ error }}</p>
 
-      <button class="button-primary" type="submit" :disabled="busy">
-        {{ busy ? '登录中…' : '登录' }}
-      </button>
-    </form>
+      <!-- 微信里优先走企业微信自动识别，省掉输密码 -->
+      <a v-if="inWechat" class="button-primary wecom" :href="wecomStartUrl">企业微信登录</a>
+
+      <form class="login-form" @submit.prevent="submit">
+        <label>
+          <span>学号</span>
+          <input v-model.trim="username" type="text" autocomplete="username" :disabled="busy" required />
+        </label>
+        <label>
+          <span>密码</span>
+          <input v-model="password" type="password" autocomplete="current-password" :disabled="busy" required />
+        </label>
+
+        <button class="button-primary" type="submit" :disabled="busy">
+          {{ busy ? '登录中…' : '登录' }}
+        </button>
+      </form>
+
+      <p v-if="inWechat" class="hint hint-small">
+        在微信里也可以直接用上面的企业微信登录，无需输入学号密码。
+      </p>
+    </template>
   </section>
 </template>
 
@@ -104,6 +137,11 @@ h2 {
   color: var(--muted);
   font-size: 0.8125rem;
   line-height: 1.6;
+}
+
+.hint-small {
+  margin-top: 0.75rem;
+  font-size: 0.75rem;
 }
 
 .logged-in {
@@ -151,7 +189,7 @@ h2 {
 }
 
 .notice {
-  margin: 0;
+  margin: 0.75rem 0 0;
   padding: 0.5rem 0.75rem;
   border-radius: 0.5rem;
   font-size: 0.8125rem;
@@ -164,12 +202,20 @@ h2 {
   border: 1px solid #fecaca;
 }
 
-button {
+.notice.success {
+  color: var(--ok);
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+}
+
+button,
+.wecom {
   justify-self: start;
   padding: 0.5rem 1rem;
   border: 1px solid transparent;
   border-radius: 0.5rem;
   font: inherit;
+  text-decoration: none;
   cursor: pointer;
 }
 
@@ -181,6 +227,13 @@ button:disabled {
 .button-primary {
   color: #fff;
   background: var(--ink);
+}
+
+.wecom {
+  margin-top: 0.875rem;
+  color: var(--ok);
+  background: #f0fdf4;
+  border-color: #bbf7d0;
 }
 
 .button-secondary {

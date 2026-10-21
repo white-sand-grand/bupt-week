@@ -24,9 +24,7 @@ body {
   padding: 4rem 1.5rem;
 }
 
-.panels {
-  display: grid;
-  gap: 1rem;
+.shell > .panel {
   margin-bottom: 1.5rem;
 }
 

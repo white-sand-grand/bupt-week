@@ -1,23 +1,24 @@
 import { api } from './client.js'
 
 /**
- * 两个系统的登录。
+ * 登录接口。
  *
- * 前端只拿到不透明 sessionId，不接触密码、不接触 Blade-Auth / refresh_token /
- * 教务 Cookie。换来的代价是每次请求多一跳服务端查询，收益是凭证不暴露给 XSS。
+ * 云邮和教务共用同一套统一身份认证（CAS），所以前端只有一个登录表单，
+ * 一次请求同时登两个系统。任一侧过期只影响对应功能，不级联。
  */
 
-export const loginUcloud = (username, password) =>
-  api('/api/ucloud/login', { method: 'POST', body: { username, password } })
+/** 统一登录：一次认证，同时登云邮和教务处。 */
+export const login = (username, password) =>
+  api('/api/auth/login', { method: 'POST', body: { username, password } })
+
+/** 企业微信 / 微信内自动识别的入口。浏览器跳转，不走 fetch。 */
+export const wecomStartUrl = '/api/auth/wecom/start'
 
 export const checkUcloudSession = (sessionId) =>
   api('/api/ucloud/session', { method: 'POST', body: { sessionId } })
 
 export const logoutUcloud = (sessionId) =>
   api('/api/ucloud/logout', { method: 'POST', body: { sessionId } })
-
-export const loginJwgl = (username, password) =>
-  api('/api/jwgl/login', { method: 'POST', body: { username, password } })
 
 export const checkJwglSession = (sessionId) =>
   api('/api/jwgl/session', { method: 'POST', body: { sessionId } })

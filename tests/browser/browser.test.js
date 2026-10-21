@@ -31,11 +31,31 @@ const BLOCKED_ORIGIN = 'http://127.0.0.1:9912' // 未放行的来源
 const APP_ORIGIN = `http://127.0.0.1:${APP_PORT}`
 const BACKEND_ORIGIN = `http://127.0.0.1:${BACKEND_PORT}`
 
-const SESSION = {
-  sessionId: 'sid-2021001234',
+const EXPIRES_AT = Date.now() + 3600_000
+
+/** 统一登录接口的响应：一次认证，两个系统各一个 sessionId。 */
+const LOGIN_OK = {
+  success: true,
+  data: {
+    ucloud: { sessionId: 'uc-sid', username: '2021001234', realName: '张三' },
+    jwgl: { sessionId: 'jw-sid', username: '2021001234' },
+    jwglVia: 'cas',
+    expiresAt: EXPIRES_AT,
+  },
+}
+
+/** 单系统探活接口的响应。 */
+const UCLOUD_SESSION = {
+  success: true,
+  data: { sessionId: 'uc-sid', username: '2021001234', realName: '张三', expiresAt: EXPIRES_AT },
+}
+
+/** localStorage 里存的样子——只有 sessionId、学号、姓名、过期时间。 */
+const STORED_UCLOUD = {
+  sessionId: 'uc-sid',
   username: '2021001234',
   realName: '张三',
-  expiresAt: Date.now() + 3600_000,
+  expiresAt: EXPIRES_AT,
 }
 
 // chrome-headless-shell 没装成（CDN 连接被重置），用完整的 chromium 构建顶上。
@@ -243,19 +263,21 @@ test('下载接口：无会话时返回 401 且带 stage（浏览器侧看到的
 
 // ── 登录 ────────────────────────────────────────────────────────────────────
 
-const firstPanel = '.panels > .panel:nth-of-type(1)'
-const secondPanel = '.panels > .panel:nth-of-type(2)'
+const panel = '.panel'
 
-test('两个系统的登录表单都渲染出来', async () => {
+test('统一登录：只有一个表单，并说明登录一次即可', async () => {
   const page = await browser.newPage()
   try {
     await page.goto(APP_ORIGIN, { waitUntil: 'networkidle' })
 
-    const headings = await page.$$eval('.panel h2', (nodes) => nodes.map((node) => node.textContent))
-    assert.deepEqual(headings.sort(), ['云邮教学空间', '教务处'].sort())
+    // 只有一个面板、一套输入——不再是两个系统各一个
+    assert.equal(await page.locator('.panel').count(), 1)
+    assert.equal(await page.locator('.login-form input[type="text"]').count(), 1)
+    assert.equal(await page.locator('.login-form input[type="password"]').count(), 1)
+    assert.equal(await page.textContent('.panel h2'), '登录')
 
-    assert.equal(await page.locator('.login-form input[type="text"]').count(), 2)
-    assert.equal(await page.locator('.login-form input[type="password"]').count(), 2)
+    // 文案要说清"登录一次"
+    assert.match(await page.textContent('.panel .hint'), /登录一次即可/)
   } finally {
     await page.close()
   }
@@ -264,15 +286,15 @@ test('两个系统的登录表单都渲染出来', async () => {
 test('登录成功后显示姓名，localStorage 里只有 sessionId', async () => {
   const page = await browser.newPage()
   try {
-    await page.route('**/api/ucloud/login', (route) => fulfill(route, { success: true, data: SESSION }))
+    await page.route('**/api/auth/login', (route) => fulfill(route, LOGIN_OK))
 
     await page.goto(APP_ORIGIN, { waitUntil: 'networkidle' })
-    await page.fill(`${firstPanel} input[type="text"]`, '2021001234')
-    await page.fill(`${firstPanel} input[type="password"]`, 'pw')
-    await page.click(`${firstPanel} button[type="submit"]`)
+    await page.fill(`${panel} input[type="text"]`, '2021001234')
+    await page.fill(`${panel} input[type="password"]`, 'pw')
+    await page.click(`${panel} button[type="submit"]`)
 
-    await page.waitForSelector(`${firstPanel} .logged-in`)
-    const who = await page.textContent(`${firstPanel} .who`)
+    await page.waitForSelector(`${panel} .logged-in`)
+    const who = await page.textContent(`${panel} .who`)
     assert.match(who, /张三/)
     assert.match(who, /2021001234/)
 
@@ -293,21 +315,21 @@ test('登录成功后显示姓名，localStorage 里只有 sessionId', async () 
 test('登录失败时展示后端给的人话错误，不暴露 stage', async () => {
   const page = await browser.newPage()
   try {
-    await page.route('**/api/ucloud/login', (route) =>
+    await page.route('**/api/auth/login', (route) =>
       fulfill(route, { success: false, stage: 'cas-login', msg: '用户名或密码错误' }, 401),
     )
 
     await page.goto(APP_ORIGIN, { waitUntil: 'networkidle' })
-    await page.fill(`${firstPanel} input[type="text"]`, '2021001234')
-    await page.fill(`${firstPanel} input[type="password"]`, 'wrong')
-    await page.click(`${firstPanel} button[type="submit"]`)
+    await page.fill(`${panel} input[type="text"]`, '2021001234')
+    await page.fill(`${panel} input[type="password"]`, 'wrong')
+    await page.click(`${panel} button[type="submit"]`)
 
-    await page.waitForSelector(`${firstPanel} .notice.error`)
-    const notice = await page.textContent(`${firstPanel} .notice.error`)
+    await page.waitForSelector(`${panel} .notice.error`)
+    const notice = await page.textContent(`${panel} .notice.error`)
     assert.match(notice, /用户名或密码错误/)
     assert.equal(notice.includes('cas-login'), false, 'stage 不该透给用户')
 
-    assert.equal(await page.locator(`${firstPanel} .logged-in`).count(), 0)
+    assert.equal(await page.locator(`${panel} .logged-in`).count(), 0)
   } finally {
     await page.close()
   }
@@ -316,18 +338,18 @@ test('登录失败时展示后端给的人话错误，不暴露 stage', async ()
 test('刷新页面后登录态保持', async () => {
   const page = await browser.newPage()
   try {
-    await page.route('**/api/ucloud/login', (route) => fulfill(route, { success: true, data: SESSION }))
-    await page.route('**/api/ucloud/session', (route) => fulfill(route, { success: true, data: SESSION }))
+    await page.route('**/api/auth/login', (route) => fulfill(route, LOGIN_OK))
+    await page.route('**/api/ucloud/session', (route) => fulfill(route, UCLOUD_SESSION))
 
     await page.goto(APP_ORIGIN, { waitUntil: 'networkidle' })
-    await page.fill(`${firstPanel} input[type="text"]`, '2021001234')
-    await page.fill(`${firstPanel} input[type="password"]`, 'pw')
-    await page.click(`${firstPanel} button[type="submit"]`)
-    await page.waitForSelector(`${firstPanel} .logged-in`)
+    await page.fill(`${panel} input[type="text"]`, '2021001234')
+    await page.fill(`${panel} input[type="password"]`, 'pw')
+    await page.click(`${panel} button[type="submit"]`)
+    await page.waitForSelector(`${panel} .logged-in`)
 
     await page.reload({ waitUntil: 'networkidle' })
-    await page.waitForSelector(`${firstPanel} .logged-in`)
-    assert.match(await page.textContent(`${firstPanel} .who`), /张三/)
+    await page.waitForSelector(`${panel} .logged-in`)
+    assert.match(await page.textContent(`${panel} .who`), /张三/)
   } finally {
     await page.close()
   }
@@ -339,7 +361,7 @@ test('会话已失效时刷新页面会被打回登录态', async () => {
     await page.goto(APP_ORIGIN)
     await page.evaluate((session) => {
       localStorage.setItem('bupt-week-ucloud-auth', JSON.stringify(session))
-    }, SESSION)
+    }, STORED_UCLOUD)
 
     await page.route('**/api/ucloud/session', (route) =>
       fulfill(route, { success: false, stage: 'ucloud-auth', msg: '云邮登录已过期，请重新登录' }, 401),
@@ -348,8 +370,8 @@ test('会话已失效时刷新页面会被打回登录态', async () => {
     await page.reload({ waitUntil: 'networkidle' })
 
     // restore() 失败后应回到未登录，且 localStorage 被清掉
-    await page.waitForSelector(`${firstPanel} .login-form`)
-    assert.equal(await page.locator(`${firstPanel} .logged-in`).count(), 0)
+    await page.waitForSelector(`${panel} .login-form`)
+    assert.equal(await page.locator(`${panel} .logged-in`).count(), 0)
     assert.equal(await page.evaluate(() => localStorage.getItem('bupt-week-ucloud-auth')), null)
   } finally {
     await page.close()
@@ -359,18 +381,18 @@ test('会话已失效时刷新页面会被打回登录态', async () => {
 test('退出登录会调后端并清掉本地状态', async () => {
   const page = await browser.newPage()
   try {
-    await page.route('**/api/ucloud/login', (route) => fulfill(route, { success: true, data: SESSION }))
+    await page.route('**/api/auth/login', (route) => fulfill(route, LOGIN_OK))
     await page.route('**/api/ucloud/logout', (route) => fulfill(route, { success: true }))
 
     await page.goto(APP_ORIGIN, { waitUntil: 'networkidle' })
-    await page.fill(`${firstPanel} input[type="text"]`, '2021001234')
-    await page.fill(`${firstPanel} input[type="password"]`, 'pw')
-    await page.click(`${firstPanel} button[type="submit"]`)
-    await page.waitForSelector(`${firstPanel} .logged-in`)
+    await page.fill(`${panel} input[type="text"]`, '2021001234')
+    await page.fill(`${panel} input[type="password"]`, 'pw')
+    await page.click(`${panel} button[type="submit"]`)
+    await page.waitForSelector(`${panel} .logged-in`)
 
-    await page.click(`${firstPanel} .logged-in button`)
+    await page.click(`${panel} .logged-in button`)
 
-    await page.waitForSelector(`${firstPanel} .login-form`)
+    await page.waitForSelector(`${panel} .login-form`)
     assert.equal(await page.evaluate(() => localStorage.getItem('bupt-week-ucloud-auth')), null)
   } finally {
     await page.close()
@@ -381,57 +403,58 @@ test('输入不合法时拦住，不发登录请求', async () => {
   const page = await browser.newPage()
   let loginCalls = 0
   try {
-    await page.route('**/api/ucloud/login', (route) => {
+    await page.route('**/api/auth/login', (route) => {
       loginCalls += 1
-      return fulfill(route, { success: true, data: SESSION })
+      return fulfill(route, LOGIN_OK)
     })
 
     await page.goto(APP_ORIGIN, { waitUntil: 'networkidle' })
 
     // 完全空着：input 上的 required 拦住 submit。
-    await page.click(`${firstPanel} button[type="submit"]`)
+    await page.click(`${panel} button[type="submit"]`)
     await page.waitForTimeout(300)
     assert.equal(loginCalls, 0, '空表单不该发请求')
-    assert.equal(await page.locator(`${firstPanel} .notice.error`).count(), 0)
-    assert.equal(await page.locator(`${firstPanel} .login-form`).count(), 1, '应仍停留在登录表单')
+    assert.equal(await page.locator(`${panel} .notice.error`).count(), 0)
+    assert.equal(await page.locator(`${panel} .login-form`).count(), 1, '应仍停留在登录表单')
 
     // 学号只填空白：v-model.trim 把它变成空串，同样被 required 拦住。
-    await page.fill(`${firstPanel} input[type="text"]`, '   ')
-    await page.fill(`${firstPanel} input[type="password"]`, 'pw')
-    await page.click(`${firstPanel} button[type="submit"]`)
+    await page.fill(`${panel} input[type="text"]`, '   ')
+    await page.fill(`${panel} input[type="password"]`, 'pw')
+    await page.click(`${panel} button[type="submit"]`)
     await page.waitForTimeout(300)
 
     assert.equal(loginCalls, 0, '空白学号不该发请求')
-    assert.equal(await page.locator(`${firstPanel} .login-form`).count(), 1, '应仍停留在登录表单')
+    assert.equal(await page.locator(`${panel} .login-form`).count(), 1, '应仍停留在登录表单')
   } finally {
     await page.close()
   }
 })
 
-test('两个系统登录态互不影响', async () => {
+test('一次登录同时建立两个系统的登录态', async () => {
   const page = await browser.newPage()
   try {
-    await page.route('**/api/ucloud/login', (route) => fulfill(route, { success: true, data: SESSION }))
-    await page.route('**/api/jwgl/login', (route) =>
+    await page.route('**/api/auth/login', (route) =>
       fulfill(route, {
         success: true,
-        data: { sessionId: 'jw-1', username: '2021001234', expiresAt: Date.now() + 3600_000 },
+        data: {
+          ucloud: { sessionId: 'uc-1', username: '2021001234', realName: '张三' },
+          jwgl: { sessionId: 'jw-1', username: '2021001234' },
+          expiresAt: Date.now() + 3600_000,
+        },
       }),
     )
 
     await page.goto(APP_ORIGIN, { waitUntil: 'networkidle' })
+    await page.fill(`${panel} input[type="text"]`, '2021001234')
+    await page.fill(`${panel} input[type="password"]`, 'pw')
+    await page.click(`${panel} button[type="submit"]`)
 
-    for (const [panel, path] of [
-      [firstPanel, '**/api/ucloud/login'],
-      [secondPanel, '**/api/jwgl/login'],
-    ]) {
-      await page.fill(`${panel} input[type="text"]`, '2021001234')
-      await page.fill(`${panel} input[type="password"]`, 'pw')
-      await page.click(`${panel} button[type="submit"]`)
-      await page.waitForSelector(`${panel} .logged-in`)
-    }
+    await page.waitForSelector(`${panel} .logged-in`)
 
-    assert.equal(await page.locator('.logged-in').count(), 2)
+    // 对外是一个登录态
+    assert.match(await page.textContent(`${panel} .who`), /张三/)
+
+    // 内部是两个系统的独立凭证，各存各的 key
     const keys = await page.evaluate(() =>
       Object.keys(localStorage)
         .filter((key) => key.startsWith('bupt-week-'))
