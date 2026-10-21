@@ -3,6 +3,7 @@ import { ApiError, readJson } from '../http.js'
 import { CAS_CLIENTS, casAuthenticate, casClientRedirect } from '../services/cas.js'
 import { getUserInfo, loginUcloudWithTicket, refreshAccessToken } from '../services/ucloud.js'
 import { loginJwgl, loginJwglWithTicket, validateJwglSession } from '../services/jwgl.js'
+import { withUserAgent } from '../user-agent.js'
 
 // 服务端会话 7 天。上游会话可能提前失效，届时提示重新登录即可。
 const SESSION_TTL_MS = 7 * 86400000
@@ -96,7 +97,7 @@ function reuseCookies(fetchImpl, cookies) {
   }
 }
 
-export function createAuthRoutes({ getSessionStore }) {
+export function createAuthRoutes({ getSessionStore, frontendUrl = '' }) {
   const routes = new Hono()
 
   // ── 统一登录 ──────────────────────────────────────────────────────────────
@@ -268,7 +269,7 @@ export function createAuthRoutes({ getSessionStore }) {
     const state = c.req.query('state') || ''
 
     if (!code || !state) {
-      return c.redirect(`${frontendOrigin(c)}#/login?error=wecom-cancelled`)
+      return c.redirect(`${frontendOrigin(c, frontendUrl)}#/login?error=wecom-cancelled`)
     }
 
     const loginUrl = `https://auth.bupt.edu.cn/authserver/login?client_name=${CAS_CLIENTS.wecom}`
@@ -276,9 +277,9 @@ export function createAuthRoutes({ getSessionStore }) {
 
     let response
     try {
-      response = await fetch(loginUrl, { redirect: 'manual' })
+      response = await fetch(loginUrl, withUserAgent({ redirect: 'manual' }))
     } catch {
-      return c.redirect(`${frontendOrigin(c)}#/login?error=wecom-connect`)
+      return c.redirect(`${frontendOrigin(c, frontendUrl)}#/login?error=wecom-connect`)
     }
 
     const location = response.headers.get('location') || ''
@@ -294,14 +295,14 @@ export function createAuthRoutes({ getSessionStore }) {
     if (!ticket) {
       // 到这一步失败，最可能是 CAS 不认被改过的 redirect，或者 code 已过期
       console.warn('[auth] 企业微信回调没拿到 ticket', { status: response.status, hasLocation: Boolean(location) })
-      return c.redirect(`${frontendOrigin(c)}#/login?error=wecom-no-ticket`)
+      return c.redirect(`${frontendOrigin(c, frontendUrl)}#/login?error=wecom-no-ticket`)
     }
 
     const ucloud = await loginUcloudWithTicket(ticket)
     const sessionId = newSessionId()
     await getSessionStore().set(sessionId, { kind: 'ucloud', ...ucloud, expiresAt: expiresAt() })
 
-    return c.redirect(`${frontendOrigin(c)}#/login?wecom=ok&sessionId=${encodeURIComponent(sessionId)}`)
+    return c.redirect(`${frontendOrigin(c, frontendUrl)}#/login?wecom=ok&sessionId=${encodeURIComponent(sessionId)}`)
   })
 
   return routes
@@ -314,10 +315,15 @@ function backendOrigin(requestUrl) {
 }
 
 /**
- * 前端地址。企业微信流程最后要跳回前端，开发时是 Vite，线上是 Pages。
- * 用 Referer 反推：用户是从前端点进来的，Referer 就是前端地址。
+ * 前端地址。企业微信流程最后要跳回前端。
+ *
+ * 取值优先级：环境变量 FRONTEND_URL > Referer 反推 > 后端自身地址。
+ * 不能默认 localhost——用户可能是直接在微信里打开 start 地址的，
+ * 那时没有 Referer，跳回 127.0.0.1 在手机上根本打不开。
  */
-function frontendOrigin(context) {
+function frontendOrigin(context, configured) {
+  if (configured) return configured.replace(/\/+$/, '') + '/'
+
   const referer = context.req.header('Referer') || ''
   if (referer) {
     try {
@@ -325,8 +331,8 @@ function frontendOrigin(context) {
       // 带尾斜杠：拼出来是 http://host/#/login 而不是 http://host#/login
       return `${url.protocol}//${url.host}/`
     } catch {
-      // Referer 不可解析就落到默认值
+      // Referer 不可解析就落到后端自身地址
     }
   }
-  return 'http://127.0.0.1:5173/'
+  return backendOrigin(context.req.url) + '/'
 }

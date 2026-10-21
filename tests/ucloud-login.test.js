@@ -72,7 +72,7 @@ test('loginUcloud：走完 CAS → ticket → OAuth → 用户信息', async () 
 test('loginUcloud：CAS 第一步的 Cookie 被带到第二步', async () => {
   const { fetchImpl, calls } = happyPath()
   await loginUcloud({ username: 'u', password: 'p', fetchImpl })
-  assert.equal(calls[1].options.headers.Cookie, 'JSESSIONID=abc')
+  assert.equal(new Headers(calls[1].options.headers).get('Cookie'), 'JSESSIONID=abc')
 })
 
 test('loginUcloud：CAS 表单带上实时取到的 execution', async () => {
@@ -94,16 +94,16 @@ test('loginUcloud：ticket 用 grant_type=third 换', async () => {
   const body = new URLSearchParams(calls[2].options.body)
   assert.equal(body.get('grant_type'), 'third')
   assert.equal(body.get('ticket'), 'ST-xyz')
-  assert.equal(calls[2].options.headers.Authorization, 'Basic cG9ydGFsOnBvcnRhbF9zZWNyZXQ=')
-  assert.equal(calls[2].options.headers['Tenant-Id'], '000000')
+  assert.equal(new Headers(calls[2].options.headers).get('Authorization'), 'Basic cG9ydGFsOnBvcnRhbF9zZWNyZXQ=')
+  assert.equal(new Headers(calls[2].options.headers).get('Tenant-Id'), '000000')
 })
 
 test('loginUcloud：业务接口带的是 Blade-Auth，不是 OAuth 那个 client 头', async () => {
   const { fetchImpl, calls } = happyPath()
   await loginUcloud({ username: 'u', password: 'p', fetchImpl })
 
-  assert.equal(calls[3].options.headers['Blade-Auth'], 'blade-access-token')
-  assert.equal(calls[3].options.headers.Authorization, 'Basic c3dvcmQ6c3dvcmRfc2VjcmV0')
+  assert.equal(new Headers(calls[3].options.headers).get('Blade-Auth'), 'blade-access-token')
+  assert.equal(new Headers(calls[3].options.headers).get('Authorization'), 'Basic c3dvcmQ6c3dvcmRfc2VjcmV0')
 })
 
 test('loginUcloud：学号或密码为空时报 400，不发任何请求', async () => {
@@ -319,7 +319,7 @@ test('loginUcloud：CAS 登录页下发多个 Cookie 时全部带到下一步', 
 
   await loginUcloud({ username: 'u', password: 'p', fetchImpl })
 
-  const cookie = calls[1].options.headers.Cookie
+  const cookie = new Headers(calls[1].options.headers).get('Cookie')
   assert.match(cookie, /JSESSIONID=abc/)
   assert.match(cookie, /CASPRIVACY="ST-xxx"/)
   // 属性（Path/HttpOnly）不能带过去

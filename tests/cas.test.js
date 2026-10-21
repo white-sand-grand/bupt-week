@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { casAuthenticate, casClientRedirect, CAS_CLIENTS } from '../server/services/cas.js'
+import { USER_AGENT } from '../server/user-agent.js'
 
 const CAS_PAGE = '<input type="hidden" name="execution" value="e1s2e3" />'
 const OK_PAGE = '<html><head><title>教学评价</title></head><body>已登录</body></html>'
@@ -41,7 +42,7 @@ test('casAuthenticate：走完 CAS 并取出 ticket', async () => {
   // service 被编进登录 URL
   assert.match(calls[0].url, /service=https%3A%2F%2Fucloud\.bupt\.edu\.cn/)
   assert.equal(calls[1].options.redirect, 'manual')
-  assert.equal(calls[1].options.headers.Cookie, 'CASTGC=abc')
+  assert.equal(new Headers(calls[1].options.headers).get('Cookie'), 'CASTGC=abc')
 })
 
 test('casAuthenticate：service 未注册时给出可读原因，而不是网络错误', async () => {
@@ -182,4 +183,43 @@ test('casClientRedirect：连不上时报 wecom-connect', async () => {
     () => casClientRedirect({ clientName: 'mc-wx', service: 'https://x', fetchImpl }),
     (error) => error.stage === 'wecom-connect' && /连接被重置/.test(error.message),
   )
+})
+
+// ── User-Agent ──────────────────────────────────────────────────────────────
+
+/**
+ * 回归测试：学校的 CAS 会拒绝没有 User-Agent 的请求
+ * （java.lang.IllegalStateException: Request does not specify a user-agent）。
+ *
+ * Node 的 fetch 会发默认 UA，所以本机测试发现不了；
+ * Cloudflare Workers 的 fetch 不发，整条登录链会在 Workers 上静默挂掉。
+ * 这个断言就是防那种"本地绿、线上挂"的。
+ */
+test('casAuthenticate：两次请求都带 User-Agent', async () => {
+  const { fetchImpl, calls } = scriptedFetch([
+    new Response(CAS_PAGE, { headers: { 'set-cookie': 'a=1' } }),
+    new Response(null, { status: 302, headers: { Location: 'https://x?ticket=ST-1' } }),
+  ])
+
+  await casAuthenticate({ username: 'u', password: 'p', service: 'https://x', fetchImpl })
+
+  assert.equal(calls.length, 2)
+  for (const [index, call] of calls.entries()) {
+    const ua = new Headers(call.options.headers).get('User-Agent')
+    assert.ok(ua, `第 ${index + 1} 次请求没带 User-Agent，Workers 上会被 CAS 拒`)
+    assert.equal(ua, USER_AGENT)
+  }
+})
+
+test('casClientRedirect：请求带 User-Agent', async () => {
+  const { fetchImpl, calls } = scriptedFetch([
+    new Response(null, {
+      status: 302,
+      headers: { Location: 'https://app.bupt.edu.cn/x?state=TST-1' },
+    }),
+  ])
+
+  await casClientRedirect({ clientName: 'mc-wx', service: 'https://x', fetchImpl })
+
+  assert.equal(new Headers(calls[0].options.headers).get('User-Agent'), USER_AGENT)
 })

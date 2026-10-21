@@ -20,6 +20,13 @@ function getStore(env) {
   return cachedStore
 }
 
+function parseOrigins(raw) {
+  return String(raw || '')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean)
+}
+
 /**
  * Cloudflare Workers 入口。
  *
@@ -29,11 +36,12 @@ function getStore(env) {
 export default {
   fetch(request, env, executionCtx) {
     if (!cachedApp) {
-      const allowedOrigins = String(env.CORS_ORIGINS || '')
-        .split(',')
-        .map((origin) => origin.trim())
-        .filter(Boolean)
-      cachedApp = createBackend({ getSessionStore: () => getStore(env), allowedOrigins })
+      cachedApp = createBackend({
+        getSessionStore: () => getStore(env),
+        allowedOrigins: parseOrigins(env.CORS_ORIGINS),
+        // 企业微信登录成功后跳回前端。必须是公网可达的地址。
+        frontendUrl: env.FRONTEND_URL || '',
+      })
     }
     return cachedApp.fetch(request, env, executionCtx)
   },

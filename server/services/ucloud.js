@@ -1,6 +1,7 @@
 import { ApiError } from '../http.js'
 import { redactSensitive } from '../log-redact.js'
 import { casAuthenticate, describeNetworkError } from './cas.js'
+import { withUserAgent } from '../user-agent.js'
 
 const SERVICE_URL = 'https://ucloud.bupt.edu.cn'
 const API_BASE_URL = 'https://apiucloud.bupt.edu.cn'
@@ -23,15 +24,18 @@ async function readJsonBody(response) {
 async function postToken(body, fetchImpl) {
   let response
   try {
-    response = await fetchImpl(TOKEN_URL, {
-      method: 'POST',
-      headers: {
-        Authorization: OAUTH_AUTHORIZATION,
-        'Tenant-Id': TENANT_ID,
-        'Content-Type': 'application/x-www-form-urlencoded',
-      },
-      body: new URLSearchParams(body),
-    })
+    response = await fetchImpl(
+      TOKEN_URL,
+      withUserAgent({
+        method: 'POST',
+        headers: {
+          Authorization: OAUTH_AUTHORIZATION,
+          'Tenant-Id': TENANT_ID,
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: new URLSearchParams(body),
+      }),
+    )
   } catch (error) {
     throw new ApiError(502, {
       stage: 'oauth-connect',
@@ -73,13 +77,16 @@ export async function refreshAccessToken(refreshToken, fetchImpl = fetch) {
 export async function getUserInfo(accessToken, fetchImpl = fetch) {
   let response
   try {
-    response = await fetchImpl(INFO_URL, {
-      headers: {
-        Authorization: BUSINESS_AUTHORIZATION,
-        'Tenant-Id': TENANT_ID,
-        'Blade-Auth': accessToken,
-      },
-    })
+    response = await fetchImpl(
+      INFO_URL,
+      withUserAgent({
+        headers: {
+          Authorization: BUSINESS_AUTHORIZATION,
+          'Tenant-Id': TENANT_ID,
+          'Blade-Auth': accessToken,
+        },
+      }),
+    )
   } catch (error) {
     throw new ApiError(502, {
       stage: 'user-info-connect',

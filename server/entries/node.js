@@ -15,7 +15,12 @@ const allowedOrigins = String(process.env.CORS_ORIGINS || '')
 // 用工厂而不是直接传实例：FileSessionStore 构造时会读文件，推迟到真正有请求时再打开。
 const store = new FileSessionStore()
 
-const app = createBackend({ getSessionStore: () => store, allowedOrigins })
+const app = createBackend({
+  getSessionStore: () => store,
+  allowedOrigins,
+  // 企业微信登录成功后跳回前端；不设则按 Referer 推断
+  frontendUrl: process.env.FRONTEND_URL || '',
+})
 
 serve({ fetch: app.fetch, hostname, port }, () => {
   console.log(`[backend] listening on http://${hostname}:${port}`)

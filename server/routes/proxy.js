@@ -1,4 +1,5 @@
 import { ApiError } from '../http.js'
+import { withUserAgent } from '../user-agent.js'
 import { corsHeadersFor } from '../cors.js'
 
 const FILE_ORIGIN = 'https://fileucloud.bupt.edu.cn'
@@ -67,9 +68,10 @@ export function mountProxyRoutes(app, { allowedOrigins = [] } = {}) {
 
     let response
     try {
-      response = await fetch(new Request(target, { method: 'GET', headers }), {
-        signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
-      })
+      response = await fetch(
+        new Request(target, withUserAgent({ method: 'GET', headers })),
+        { signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS) },
+      )
     } catch (error) {
       // 不把原因吞掉：只报"连不上"而不说为什么，排查时等于没报。
       console.error('[proxy] 上游请求失败', {

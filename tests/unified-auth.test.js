@@ -10,9 +10,9 @@ function json(body, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
 }
 
-function makeApp() {
+function makeApp({ frontendUrl = '' } = {}) {
   const store = new MemorySessionStore()
-  const app = createBackend({ getSessionStore: () => store, allowedOrigins: [] })
+  const app = createBackend({ getSessionStore: () => store, allowedOrigins: [], frontendUrl })
   return { app, store }
 }
 
@@ -294,4 +294,55 @@ test('GET /api/auth/wecom/start：CAS 连不上时返回可读错误', async (t)
 
   assert.equal(response.status, 502)
   assert.equal(body.stage, 'wecom-connect')
+})
+
+test('wecom/callback：配了 FRONTEND_URL 时跳回它，不依赖 Referer', async (t) => {
+  const { app } = makeApp({ frontendUrl: 'https://example.github.io/BUPT-week/' })
+  t.mock.method(globalThis, 'fetch', async (url) => {
+    if (String(url).includes('client_name=mc-wx')) {
+      return new Response(null, {
+        status: 302,
+        headers: { Location: 'https://ucloud.bupt.edu.cn?ticket=ST-x' },
+      })
+    }
+    if (String(url).includes('oauth/token')) return json({ access_token: 't', refresh_token: 'r' })
+    if (String(url).includes('ykt-basics/info')) {
+      return json({ code: 200, success: true, data: { id: '1', realName: '王五' } })
+    }
+    return json({})
+  })
+
+  // 故意不带 Referer——模拟用户直接在微信里打开 start 地址
+  const response = await app.request('/api/auth/wecom/callback?code=C&state=S')
+
+  assert.equal(response.status, 302)
+  assert.equal(
+    response.headers.get('location'),
+    'https://example.github.io/BUPT-week/#/login?wecom=ok&sessionId='
+      + encodeURIComponent(new URLSearchParams(response.headers.get('location').split('?')[1]).get('sessionId')),
+  )
+})
+
+test('wecom/callback：没配 FRONTEND_URL 又没有 Referer 时，跳回后端自身而不是 localhost', async (t) => {
+  const { app } = makeApp()
+  t.mock.method(globalThis, 'fetch', async (url) => {
+    if (String(url).includes('client_name=mc-wx')) {
+      return new Response(null, {
+        status: 302,
+        headers: { Location: 'https://ucloud.bupt.edu.cn?ticket=ST-x' },
+      })
+    }
+    if (String(url).includes('oauth/token')) return json({ access_token: 't', refresh_token: 'r' })
+    if (String(url).includes('ykt-basics/info')) {
+      return json({ code: 200, success: true, data: { id: '1', realName: '王五' } })
+    }
+    return json({})
+  })
+
+  const response = await app.request('/api/auth/wecom/callback?code=C&state=S')
+  const location = response.headers.get('location')
+
+  assert.equal(response.status, 302)
+  assert.equal(location.includes('127.0.0.1'), false, '不能跳回 localhost，手机上打不开')
+  assert.match(location, /^http:\/\/localhost\/#\/login\?wecom=ok&sessionId=/)
 })

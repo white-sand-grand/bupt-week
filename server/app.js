@@ -11,9 +11,9 @@ import { createAuthRoutes } from './routes/auth.js'
  * Node 入口和 Workers 入口调用的是同一个函数，代码不分支。
  * 环境差异（文件系统 / KV / 监听端口）全部由入口注入。
  *
- * @param {{ getSessionStore?: object, allowedOrigins?: string[] }} options
+ * @param {{ getSessionStore?: object, allowedOrigins?: string[], frontendUrl?: string }} options
  */
-export function createBackend({ getSessionStore = null, allowedOrigins = [] } = {}) {
+export function createBackend({ getSessionStore = null, allowedOrigins = [], frontendUrl = '' } = {}) {
   const app = new Hono()
 
   app.use('*', backendCors(allowedOrigins))
@@ -30,7 +30,7 @@ export function createBackend({ getSessionStore = null, allowedOrigins = [] } = 
   // 业务接口与会话都依赖存储，没注入就不挂——而不是挂上去每次都 401。
   if (getSessionStore) {
     app.route('/api', createApiRoutes({ getSessionStore }))
-    app.route('/api', createAuthRoutes({ getSessionStore }))
+    app.route('/api', createAuthRoutes({ getSessionStore, frontendUrl }))
   }
 
   mountProxyRoutes(app, { allowedOrigins })

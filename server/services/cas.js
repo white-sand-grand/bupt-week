@@ -1,4 +1,5 @@
 import { ApiError } from '../http.js'
+import { withUserAgent } from '../user-agent.js'
 import { redactSensitive } from '../log-redact.js'
 
 const CAS_BASE = 'https://auth.bupt.edu.cn'
@@ -89,7 +90,7 @@ export async function casAuthenticate({ username = '', password = '', service, f
 
   let loginPage
   try {
-    loginPage = await fetchImpl(loginUrl, { redirect: 'manual' })
+    loginPage = await fetchImpl(loginUrl, withUserAgent({ redirect: 'manual' }))
   } catch (error) {
     throw new ApiError(502, {
       stage: 'cas-connect',
@@ -126,16 +127,18 @@ export async function casAuthenticate({ username = '', password = '', service, f
 
   let casResponse
   try {
-    casResponse = await fetchImpl(loginUrl, {
-      method: 'POST',
-      redirect: 'manual',
-      headers: {
-        Cookie: cookies,
-        'Content-Type': 'application/x-www-form-urlencoded',
-        'User-Agent': 'Mozilla/5.0',
-      },
-      body: form,
-    })
+    casResponse = await fetchImpl(
+      loginUrl,
+      withUserAgent({
+        method: 'POST',
+        redirect: 'manual',
+        headers: {
+          Cookie: cookies,
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: form,
+      }),
+    )
   } catch (error) {
     throw new ApiError(502, { stage: 'cas-connect', msg: `统一认证登录请求失败（${describeNetworkError(error)}）` })
   }
@@ -176,7 +179,7 @@ export async function casClientRedirect({ clientName, service, fetchImpl = fetch
 
   let response
   try {
-    response = await fetchImpl(url, { redirect: 'manual' })
+    response = await fetchImpl(url, withUserAgent({ redirect: 'manual' }))
   } catch (error) {
     throw new ApiError(502, {
       stage: 'wecom-connect',
