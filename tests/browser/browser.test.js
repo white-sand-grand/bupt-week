@@ -2,7 +2,7 @@ import { test, before, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
 import { readFileSync } from 'node:fs'
-import { chromium } from 'playwright'
+import { chromium, devices } from 'playwright'
 import { serve } from '@hono/node-server'
 import { createServer as createViteServer } from 'vite'
 import { createBackend } from '../../server/app.js'
@@ -60,6 +60,11 @@ const STORED_UCLOUD = {
 
 // chrome-headless-shell 没装成（CDN 连接被重置），用完整的 chromium 构建顶上。
 const LAUNCH_OPTIONS = { channel: 'chromium' }
+
+// 微信内置浏览器的 UA。企业微信的 webview 也带 MicroMessenger。
+const WECHAT_UA =
+  'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 '
+  + 'MicroMessenger/8.0.49 MicroMessage/6.5.9'
 
 let backend
 let vite
@@ -140,8 +145,9 @@ test('应用真的挂载，并显示后端已连接', async () => {
     const heading = await page.textContent('h1')
     assert.equal(heading, 'BUPT-week')
 
-    await page.waitForSelector('.status-ok', { timeout: 10000 })
-    assert.match(await page.textContent('.status'), /后端已连接/)
+    await page.waitForFunction(() => /后端已连接/.test(document.querySelector('.footnote')?.textContent || ''), {
+      timeout: 10000,
+    })
   } finally {
     await page.close()
   }
@@ -265,23 +271,72 @@ test('下载接口：无会话时返回 401 且带 stage（浏览器侧看到的
 
 const panel = '.panel'
 
-test('统一登录：只有一个表单，并说明登录一次即可', async () => {
+test('统一登录：只有一个表单，并说明不登录也能浏览', async () => {
   const page = await browser.newPage()
   try {
     await page.goto(APP_ORIGIN, { waitUntil: 'networkidle' })
 
-    // 只有一个面板、一套输入——不再是两个系统各一个
+    // 未登录时登录面板自动展开，但只有一套输入
     assert.equal(await page.locator('.panel').count(), 1)
     assert.equal(await page.locator('.login-form input[type="text"]').count(), 1)
     assert.equal(await page.locator('.login-form input[type="password"]').count(), 1)
     assert.equal(await page.textContent('.panel h2'), '登录')
 
-    // 文案要说清"登录一次"
-    assert.match(await page.textContent('.panel .hint'), /登录一次即可/)
+    // 文案要说清两件事：登录一次即可 + 不登录也能看
+    const hint = await page.textContent('.panel .hint')
+    assert.match(hint, /登录一次即可/)
+    assert.match(hint, /不登录也能浏览/)
   } finally {
     await page.close()
   }
 })
+
+test('登录不是门禁：未登录也能进页面、也能切视图', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(APP_ORIGIN, { waitUntil: 'networkidle' })
+
+    // 没有登录墙：课表视图直接可见
+    await page.waitForSelector('.tabs')
+    assert.equal(await page.textContent('.view h2'), '课表')
+    assert.match(await page.textContent('.view .empty'), /登录后可以查看课表/)
+
+    // 能切到作业视图，照样不被拦
+    await page.click('.tabs button:nth-child(2)')
+    assert.equal(await page.textContent('.view h2'), '作业')
+    assert.match(await page.textContent('.view .empty'), /登录后可以查看作业/)
+
+    // 顶栏显示"未登录"，不是"请先登录"的遮罩
+    assert.match(await page.textContent('.topbar-auth'), /未登录/)
+  } finally {
+    await page.close()
+  }
+})
+
+test('登录后面板收起，顶栏显示姓名，视图仍可切换', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.route('**/api/auth/login', (route) => fulfill(route, LOGIN_OK))
+
+    await page.goto(APP_ORIGIN, { waitUntil: 'networkidle' })
+    await page.fill(`${panel} input[type="text"]`, '2021001234')
+    await page.fill(`${panel} input[type="password"]`, 'pw')
+    await page.click(`${panel} button[type="submit"]`)
+
+    // 登录后面板收起（v-if 不再渲染），顶栏出现姓名和退出
+    await page.waitForFunction(() => document.querySelectorAll('.panel').length === 0)
+    assert.match(await page.textContent('.topbar-auth'), /张三/)
+
+    // 视图照常可切
+    await page.click('.tabs button:nth-child(2)')
+    assert.equal(await page.textContent('.view h2'), '作业')
+    // 已登录时的空状态文案不同——说的是"正在开发中"，不是"请登录"
+    assert.match(await page.textContent('.view .empty'), /正在开发中/)
+  } finally {
+    await page.close()
+  }
+})
+
 
 test('登录成功后显示姓名，localStorage 里只有 sessionId', async () => {
   const page = await browser.newPage()
@@ -293,10 +348,9 @@ test('登录成功后显示姓名，localStorage 里只有 sessionId', async () 
     await page.fill(`${panel} input[type="password"]`, 'pw')
     await page.click(`${panel} button[type="submit"]`)
 
-    await page.waitForSelector(`${panel} .logged-in`)
-    const who = await page.textContent(`${panel} .who`)
-    assert.match(who, /张三/)
-    assert.match(who, /2021001234/)
+    // 登录后面板整块卸载，姓名移到顶栏
+    await page.waitForFunction(() => document.querySelectorAll('.panel').length === 0)
+    assert.match(await page.textContent('.topbar-auth'), /张三/)
 
     // 关键断言：凭证不进前端存储
     const stored = await page.evaluate(() => JSON.parse(localStorage.getItem('bupt-week-ucloud-auth')))
@@ -345,11 +399,11 @@ test('刷新页面后登录态保持', async () => {
     await page.fill(`${panel} input[type="text"]`, '2021001234')
     await page.fill(`${panel} input[type="password"]`, 'pw')
     await page.click(`${panel} button[type="submit"]`)
-    await page.waitForSelector(`${panel} .logged-in`)
+    await page.waitForFunction(() => document.querySelectorAll('.panel').length === 0)
 
     await page.reload({ waitUntil: 'networkidle' })
-    await page.waitForSelector(`${panel} .logged-in`)
-    assert.match(await page.textContent(`${panel} .who`), /张三/)
+    await page.waitForFunction(() => document.querySelectorAll('.panel').length === 0)
+    assert.match(await page.textContent('.topbar-auth'), /张三/)
   } finally {
     await page.close()
   }
@@ -388,10 +442,11 @@ test('退出登录会调后端并清掉本地状态', async () => {
     await page.fill(`${panel} input[type="text"]`, '2021001234')
     await page.fill(`${panel} input[type="password"]`, 'pw')
     await page.click(`${panel} button[type="submit"]`)
-    await page.waitForSelector(`${panel} .logged-in`)
+    await page.waitForFunction(() => document.querySelectorAll('.panel').length === 0)
 
-    await page.click(`${panel} .logged-in button`)
+    await page.click('.topbar-auth button')
 
+    // 退出后面板重新出现（未登录时常驻）
     await page.waitForSelector(`${panel} .login-form`)
     assert.equal(await page.evaluate(() => localStorage.getItem('bupt-week-ucloud-auth')), null)
   } finally {
@@ -449,10 +504,10 @@ test('一次登录同时建立两个系统的登录态', async () => {
     await page.fill(`${panel} input[type="password"]`, 'pw')
     await page.click(`${panel} button[type="submit"]`)
 
-    await page.waitForSelector(`${panel} .logged-in`)
+    await page.waitForFunction(() => document.querySelectorAll('.panel').length === 0)
 
-    // 对外是一个登录态
-    assert.match(await page.textContent(`${panel} .who`), /张三/)
+    // 对外是一个登录态：顶栏显示姓名
+    assert.match(await page.textContent('.topbar-auth'), /张三/)
 
     // 内部是两个系统的独立凭证，各存各的 key
     const keys = await page.evaluate(() =>
@@ -464,4 +519,110 @@ test('一次登录同时建立两个系统的登录态', async () => {
   } finally {
     await page.close()
   }
+})
+
+// ── 移动端与微信内体验 ──────────────────────────────────────────────────────
+
+test('手机宽度下不错位，触摸目标够大', async () => {
+  const context = await browser.newContext({ ...devices['iPhone 13'] })
+  const page = await context.newPage()
+  try {
+    await page.goto(APP_ORIGIN, { waitUntil: 'networkidle' })
+
+    // 没有横向溢出
+    const overflow = await page.evaluate(
+      () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+    )
+    assert.ok(overflow <= 1, `出现横向溢出 ${overflow}px`)
+
+    // 顶栏登录钮和 tab 的触摸高度不低于 44px
+    const tabHeight = await page.locator('.tabs button').first().evaluate((el) => el.getBoundingClientRect().height)
+    assert.ok(tabHeight >= 44, `tab 高度仅 ${tabHeight}px`)
+
+    const buttonHeight = await page
+      .locator(`${panel} button[type="submit"]`)
+      .evaluate((el) => el.getBoundingClientRect().height)
+    assert.ok(buttonHeight >= 44, `登录按钮高度仅 ${buttonHeight}px`)
+  } finally {
+    await context.close()
+  }
+})
+
+test('普通浏览器不自动发起企业微信流程', async () => {
+  const page = await browser.newPage()
+  let wecomHits = 0
+  await page.route('**/api/auth/wecom/start', (route) => {
+    wecomHits += 1
+    return route.abort()
+  })
+
+  await page.goto(APP_ORIGIN, { waitUntil: 'networkidle' })
+  await page.waitForSelector('.tabs')
+  await page.waitForTimeout(500)
+
+  assert.equal(wecomHits, 0, '普通浏览器不该自动跳企业微信')
+  // 企业微信手动登录按钮也不该出现
+  assert.equal(await page.locator('.wecom').count(), 0)
+})
+
+test('微信 webview 里未登录会自动发起企业微信流程', async () => {
+  const context = await browser.newContext({ userAgent: WECHAT_UA })
+  const page = await context.newPage()
+
+  // 用请求事件计数，不用 waitForFunction——后者在浏览器上下文跑，
+  // 访问不到 Node 这边的变量。
+  const seen = []
+  page.on('request', (request) => {
+    if (request.url().includes('/api/auth/wecom/start')) seen.push(request.url())
+  })
+  // abort 掉导航，请求本身就足够证明"应用发起了流程"
+  await page.route('**/api/auth/wecom/start', (route) => route.abort())
+
+  await page.goto(APP_ORIGIN, { waitUntil: 'domcontentloaded' })
+  await page.waitForRequest('**/api/auth/wecom/start', { timeout: 10000 })
+
+  assert.ok(seen.length >= 1, '微信里未登录应当自动发起企业微信流程')
+  await context.close()
+})
+
+test('同一会话内不会重复自动跳（防循环标记生效）', async () => {
+  const context = await browser.newContext({ userAgent: WECHAT_UA })
+  const page = await context.newPage()
+
+  // 预先打下"本次会话已试过"的标记——这正是 App.vue 里防循环用的那个 key
+  await context.addInitScript(() => {
+    sessionStorage.setItem('bupt-week-auto-wecom-tried', '1')
+  })
+
+  const seen = []
+  page.on('request', (request) => {
+    if (request.url().includes('/api/auth/wecom/start')) seen.push(request.url())
+  })
+
+  await page.goto(APP_ORIGIN, { waitUntil: 'networkidle' })
+  await page.waitForSelector('.tabs')
+  await page.waitForTimeout(800)
+
+  assert.equal(seen.length, 0, '有标记后不该再自动跳，否则用户卡死在循环里')
+  // 页面照常可用，登录面板在手边
+  await page.waitForSelector(`${panel} .login-form`)
+  await context.close()
+})
+
+test('微信里即便不自动跳，手动企业微信登录按钮也在（兜底）', async () => {
+  const context = await browser.newContext({ userAgent: WECHAT_UA })
+  const page = await context.newPage()
+
+  // 预先打下防循环标记：不自动跳，页面才能活着，才看得到兜底按钮
+  await context.addInitScript(() => {
+    sessionStorage.setItem('bupt-week-auto-wecom-tried', '1')
+  })
+
+  await page.goto(APP_ORIGIN, { waitUntil: 'networkidle' })
+
+  // 自动识别没成功时，用户得有个手动入口
+  await page.waitForSelector('.wecom')
+  assert.equal(await page.textContent('.wecom'), '企业微信登录')
+  assert.equal(await page.getAttribute('.wecom', 'href'), '/api/auth/wecom/start')
+  await context.close()
 })

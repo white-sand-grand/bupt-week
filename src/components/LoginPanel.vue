@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, ref } from 'vue'
 import { wecomStartUrl } from '../api/auth.js'
 
 const props = defineProps({
@@ -7,35 +7,13 @@ const props = defineProps({
 })
 
 // 在微信内置浏览器里打开时，企业微信身份可以被自动识别，无需输学号密码。
-//  MicroMessenger 是微信 webview 的 UA 标识；企业微信的 UA 也带它。
+// MicroMessenger 是微信 webview 的 UA 标识；企业微信的 UA 也带它。
 const inWechat = computed(() => /MicroMessenger/i.test(navigator.userAgent))
 
 const username = ref('')
 const password = ref('')
 const busy = ref(false)
 const error = ref('')
-const notice = ref('')
-
-// 企业微信流程结束后会带参数跳回来，把结果展示出来
-onMounted(() => {
-  const hash = new URLSearchParams(location.hash.slice(1))
-  const wecom = hash.get('wecom')
-  const failure = hash.get('error')
-
-  if (wecom === 'ok') {
-    props.auth.restore()
-    notice.value = '已通过企业微信登录'
-  } else if (failure?.startsWith('wecom-')) {
-    error.value = {
-      'wecom-cancelled': '企业微信登录未完成',
-      'wecom-connect': '连不上统一认证服务，请稍后重试',
-      'wecom-no-ticket': '企业微信登录未能完成，请改用学号密码',
-    }[failure] || '企业微信登录失败'
-  }
-
-  // 清掉 hash，避免刷新时重复提示
-  if (wecom || failure) history.replaceState(null, '', location.pathname + location.search)
-})
 
 async function submit() {
   error.value = ''
@@ -61,6 +39,7 @@ async function submit() {
 
     <p class="hint">
       课表和作业共用同一套统一身份认证，<strong>登录一次即可</strong>。
+      不登录也能浏览页面，只是没有数据。
     </p>
 
     <div v-if="auth.loggedIn.value" class="logged-in">
@@ -72,7 +51,6 @@ async function submit() {
     </div>
 
     <template v-else>
-      <p v-if="notice" class="notice success" role="status">{{ notice }}</p>
       <p v-if="error" class="notice error" role="alert">{{ error }}</p>
 
       <!-- 微信里优先走企业微信自动识别，省掉输密码 -->
@@ -94,7 +72,7 @@ async function submit() {
       </form>
 
       <p v-if="inWechat" class="hint hint-small">
-        在微信里也可以直接用上面的企业微信登录，无需输入学号密码。
+        在微信里通常会自动识别企业微信身份；识别不了再用上面的按钮手动登录。
       </p>
     </template>
   </section>
@@ -211,6 +189,8 @@ h2 {
 button,
 .wecom {
   justify-self: start;
+  /* 微信里是手指点，触摸目标不小于 44px */
+  min-height: 44px;
   padding: 0.5rem 1rem;
   border: 1px solid transparent;
   border-radius: 0.5rem;

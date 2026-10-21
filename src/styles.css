@@ -11,66 +11,20 @@
   box-sizing: border-box;
 }
 
+/* 移动端优先：主要使用场景是在微信里打开，默认就是手机宽度。
+   桌面端通过 App.vue 里的 min-width 媒体查询居中限宽。 */
 body {
   margin: 0;
   font-family: system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
   color: var(--ink);
   background: #fafafa;
+  -webkit-text-size-adjust: 100%;
 }
 
-.shell {
-  max-width: 40rem;
-  margin: 0 auto;
-  padding: 4rem 1.5rem;
-}
-
-.shell > .panel {
-  margin-bottom: 1.5rem;
-}
-
-h1 {
-  margin: 0;
-  font-size: 1.75rem;
-}
-
-.subtitle {
-  margin: 0.25rem 0 2rem;
-  color: var(--muted);
-}
-
-.status {
-  margin: 0 0 1.5rem;
-  padding: 0.75rem 1rem;
-  border: 1px solid var(--line);
-  border-radius: 0.5rem;
-  background: #fff;
-}
-
-.status-checking {
-  color: var(--muted);
-}
-
-.status-ok {
-  color: var(--ok);
-  border-color: #bbf7d0;
-  background: #f0fdf4;
-}
-
-.status-error {
-  color: var(--error);
-  border-color: #fecaca;
-  background: #fef2f2;
-}
-
-.hint {
-  color: var(--muted);
-  font-size: 0.875rem;
-  line-height: 1.6;
-}
-
-code {
-  padding: 0.1rem 0.3rem;
-  border-radius: 0.25rem;
-  background: #f3f4f6;
-  font-size: 0.85em;
+/* 微信 webview 里点输入框会放大页面，固定字号避免缩放 */
+input,
+textarea,
+select,
+button {
+  font-size: 16px;
 }
