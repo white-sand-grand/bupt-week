@@ -1024,6 +1024,141 @@ test('作业：展开懒加载附件，「去交作业」深链指向该作业�
   }
 })
 
+// ── 缓存与出错提示 ───────────────────────────────────────────────────────────
+
+/** 作业接口的 mock 控制器：mode 切换成功/失败/500，验证重试与兜底链路。 */
+function assignmentsRouteHandler(mode = { fail: false }) {
+  return (route) => {
+    if (mode.fail) return fulfill(route, { success: false, msg: '云邮系统暂时无法访问' }, 502)
+    return fulfill(route, ASSIGNMENTS_FIXTURE())
+  }
+}
+
+test('作业：获取失败给人话和重试按钮，重试后恢复', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.route('**/api/auth/login', (route) => fulfill(route, LOGIN_OK))
+    await page.route('**/api/jwgl/session', (route) => fulfill(route, { success: true, data: { sessionId: 'jw-sid', username: '2021001234', expiresAt: EXPIRES_AT } }))
+    await page.route('**/api/ucloud/session', (route) => fulfill(route, UCLOUD_SESSION))
+    const mode = { fail: true }
+    await page.route('**/api/ucloud/assignments', assignmentsRouteHandler(mode))
+
+    await page.goto(APP_ORIGIN, { waitUntil: 'networkidle' })
+    await page.fill(`${panel} input[type="text"]`, '2021001234')
+    await page.fill(`${panel} input[type="password"]`, 'pw')
+    await page.click(`${panel} button[type="submit"]`)
+    await page.waitForFunction(() => document.querySelectorAll('.panel').length === 0)
+    await page.click('.tabs button:nth-child(2)')
+
+    // 错误条：服务端人话 msg + 行动按钮，不是英文黑话也没有死胡同
+    await page.waitForSelector('.notice-error')
+    const notice = await page.textContent('.notice-error')
+    assert.match(notice, /云邮系统暂时无法访问/, '应透传服务端人话 msg')
+    assert.match(notice, /重试/, '必须给出重试出路')
+
+    // 无缓存时不该有任何卡片混入
+    assert.equal(await page.locator('.card').count(), 0)
+
+    mode.fail = false
+    await page.click('.notice-error .notice-action')
+    await page.waitForSelector('.card')
+    const titles = await page.locator('.card-title').allTextContents()
+    assert.deepEqual(titles, ['lab0 环境配置', '实验一 线性表', '实验二 树'])
+  } finally {
+    await page.close()
+  }
+})
+
+test('作业：刷新失败兜底显示缓存数据（黄条说明，不再推给用户一张空列表）', async () => {
+  const context = await browser.newContext()
+  const page = await context.newPage()
+  try {
+    const mode = { fail: false }
+    await page.route('**/api/auth/login', (route) => fulfill(route, LOGIN_OK))
+    await page.route('**/api/jwgl/session', (route) => fulfill(route, { success: true, data: { sessionId: 'jw-sid', username: '2021001234', expiresAt: EXPIRES_AT } }))
+    await page.route('**/api/ucloud/session', (route) => fulfill(route, UCLOUD_SESSION))
+    await page.route('**/api/jwgl/timetable', mockTimetable)
+    await page.route('**/api/ucloud/assignments', assignmentsRouteHandler(mode))
+
+    // 第一轮：成功加载并落盘缓存
+    await page.goto(APP_ORIGIN, { waitUntil: 'networkidle' })
+    await page.fill(`${panel} input[type="text"]`, '2021001234')
+    await page.fill(`${panel} input[type="password"]`, 'pw')
+    await page.click(`${panel} button[type="submit"]`)
+    await page.waitForFunction(() => document.querySelectorAll('.panel').length === 0)
+    await page.click('.tabs button:nth-child(2)')
+    await page.waitForSelector('.card')
+    const cached = await page.evaluate(() => localStorage.getItem('bupt-week-assignments-v1'))
+    assert.ok(cached, '成功加载后应写入本地缓存')
+
+    // 第二轮：断网式失败 + 整页刷新——数据还在，只是挂了条说明
+    mode.fail = true
+    await page.reload({ waitUntil: 'networkidle' })
+    await page.click('.tabs button:nth-child(2)')
+    await page.waitForSelector('.notice-warn')
+    const warn = await page.textContent('.notice-warn')
+    assert.match(warn, /缓存/, '黄条应说明数据来自缓存')
+    assert.match(warn, /云邮系统暂时无法访问/, '失败原因要能看懂')
+
+    const titles = await page.locator('.card-title').allTextContents()
+    assert.deepEqual(titles, ['lab0 环境配置', '实验一 线性表', '实验二 树'], '缓存数据应照常渲染')
+
+    // 网络恢复后从黄条一键刷新
+    mode.fail = false
+    await page.click('.notice-warn .notice-action')
+    await page.waitForSelector('.notice-warn', { state: 'hidden' })
+    assert.equal(await page.locator('.card-title').count(), 3)
+  } finally {
+    await page.close()
+    await context.close()
+  }
+})
+
+test('课表：partial 后可补齐缺失周次，不必刷新整页', async () => {
+  const page = await browser.newPage()
+  try {
+    const week19Fails = { fail: true }
+    await page.route('**/api/auth/login', (route) => fulfill(route, LOGIN_OK))
+    await page.route('**/api/jwgl/session', (route) => fulfill(route, { success: true, data: { sessionId: 'jw-sid', username: '2021001234', expiresAt: EXPIRES_AT } }))
+    await page.route('**/api/ucloud/session', (route) => fulfill(route, UCLOUD_SESSION))
+    await page.route('**/api/jwgl/timetable', (route) => {
+      const body = route.request().postDataJSON() || {}
+      if (body.week === 19 && week19Fails.fail) {
+        return fulfill(route, { success: false, msg: '教务系统暂时无法访问' }, 502)
+      }
+      return mockTimetable(route)
+    })
+
+    await page.goto(APP_ORIGIN, { waitUntil: 'networkidle' })
+    await page.fill(`${panel} input[type="text"]`, '2021001234')
+    await page.fill(`${panel} input[type="password"]`, 'pw')
+    await page.click(`${panel} button[type="submit"]`)
+    await page.waitForFunction(() => document.querySelectorAll('.panel').length === 0)
+
+    // 第 18 周成功、第 19 周失败 → partial：现状说清 + 补齐出路
+    await page.waitForSelector('.notice-warn')
+    const warn = await page.textContent('.notice-warn')
+    assert.match(warn, /1\/2 周/, '应说明已同步 1/2 周')
+    assert.match(warn, /补齐/, '必须给出补齐按钮')
+
+    // 补齐：已缓存的第 18 周不重拉（只有一次 week=19 请求），成功后黄条消失
+    let week19Requests = 0
+    page.on('request', (request) => {
+      if (request.url().includes('/api/jwgl/timetable') && request.postData()?.includes('"week":19')) week19Requests += 1
+    })
+    week19Fails.fail = false
+    await page.click('.notice-warn .notice-action')
+    // 点完先是 syncing（黄条换成转圈），等同步真正收尾：两周都出现才算补齐成功
+    await page.waitForFunction(() => document.querySelectorAll('.week-picker option').length === 2, { timeout: 5000 })
+    await page.waitForSelector('.notice-warn', { state: 'hidden', timeout: 5000 })
+
+    await page.waitForTimeout(300)
+    assert.equal(week19Requests, 1, '补齐只该请求缺失的那一周')
+  } finally {
+    await page.close()
+  }
+})
+
 // ── 部署形态：Pages + 独立后端 ───────────────────────────────────────────────
 
 /**

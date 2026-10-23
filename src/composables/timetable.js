@@ -1,6 +1,7 @@
 import { computed, readonly, ref, watch } from 'vue'
 import { auth } from './auth.js'
 import { fetchTimetable } from '../api/timetable.js'
+import { friendlyError } from '../utils/errors.js'
 import {
   currentTimetableWeek,
   mergeTimetableWeek,
@@ -59,14 +60,22 @@ const pendingWeeks = computed(() => {
   return Math.max(0, total - weeks.value.length)
 })
 
-/** 触发同步。本账号已有缓存则直接标记完成，不重复请求。 */
-async function sync() {
+/** 数据是什么时候落盘的（给「更新于 X」提示用）。 */
+const savedAt = computed(() => (weeks.value.length ? cache.value?.savedAt ?? null : null))
+
+/** 触发同步。本账号已有缓存则直接标记完成，不重复请求（幂等入口）。 */
+function sync() {
   if (!auth.jwglReady.value) return
   if (weeks.value.length) {
     syncState.value = 'done'
     return
   }
+  return runSync()
+}
 
+/** 强制重新同步：拉当前周（拿最新的周次列表和节次模式）+ 补齐缺失周次。
+ *  已缓存的周跳过，重试不会把整个学期重拉一遍。 */
+async function runSync() {
   const mine = ++revision
   syncState.value = 'syncing'
   error.value = ''
@@ -79,10 +88,11 @@ async function sync() {
     persist(merged)
 
     const total = first.weeks.length
-    syncProgress.value = { done: 1, total }
+    const cachedWeeks = new Set(weeks.value.map((w) => w.week))
+    syncProgress.value = { done: weeks.value.length, total }
 
     for (const week of first.weeks) {
-      if (week === first.week) continue
+      if (week === first.week || cachedWeeks.has(week)) continue
       try {
         const next = await fetchTimetable(auth.sessionIdFor('jwgl'), { week, mode: first.mode })
         if (mine !== revision) return
@@ -102,7 +112,7 @@ async function sync() {
     if (mine !== revision) return
     // 一周都没拿到才算彻底失败；有旧周次时仍按 partial 展示
     syncState.value = weeks.value.length ? 'partial' : 'error'
-    error.value = caught.message || '课表同步失败'
+    error.value = friendlyError(caught)
   }
 }
 
@@ -132,8 +142,10 @@ export const timetable = {
   syncState: readonly(syncState),
   syncProgress: readonly(syncProgress),
   pendingWeeks: readonly(pendingWeeks),
+  savedAt: readonly(savedAt),
   error: readonly(error),
   sync,
+  retry: runSync,
   selectWeek,
   reset,
 }

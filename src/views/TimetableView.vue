@@ -3,6 +3,7 @@ import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { auth } from '../composables/auth.js'
 import { timetable } from '../composables/timetable.js'
 import { currentTimetableWeek, groupTimetableCourses } from '../utils/timetable-cache.js'
+import { formatUpdatedAt } from '../utils/format.js'
 
 const props = defineProps({
   /** 教务处登录态是否就绪。 */
@@ -49,11 +50,11 @@ const syncBanner = computed(() => {
     const { done, total } = timetable.syncProgress.value
     return `正在同步课表（${done}/${total} 周）…`
   }
-  if (timetable.syncState.value === 'partial') {
-    return `尚有 ${timetable.pendingWeeks.value} 周未同步，已同步周次可正常查看`
-  }
   return ''
 })
+
+/** 「更新于 X」：让用户知道手里的数据是多久前的（可看懂原则）。 */
+const savedAtText = computed(() => formatUpdatedAt(timetable.savedAt.value))
 
 function isToday(dayIndex) {
   const day = timetable.activeWeek.value?.days?.[dayIndex]
@@ -132,10 +133,29 @@ watch(() => props.ready, startSync)
       </div>
     </header>
 
-    <p v-if="syncBanner" class="notice">{{ syncBanner }}</p>
-    <p v-else-if="timetable.error.value && !weeks.length" class="notice error" role="alert">
-      {{ timetable.error.value }}
+    <!-- 同步中：转圈 + 进度，让等待有反馈 -->
+    <p v-if="syncBanner" class="notice notice-sync" role="status">
+      <svg class="spin" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+        <circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-dasharray="28" stroke-dashoffset="22" stroke-linecap="round" />
+      </svg>
+      {{ syncBanner }}
     </p>
+
+    <!-- 部分同步：说清现状（哪些能用）、原因猜测、给出路（补齐按钮） -->
+    <div v-else-if="timetable.syncState.value === 'partial'" class="notice notice-warn" role="status">
+      <span class="notice-text">
+        已同步 {{ weeks.length }}/{{ weeks.length + timetable.pendingWeeks.value }} 周，还有
+        {{ timetable.pendingWeeks.value }} 周暂时拿不到（通常是校园网不稳定），已同步的周次照常可用。
+        <span v-if="savedAtText">数据更新于 {{ savedAtText }}。</span>
+      </span>
+      <button class="notice-action" type="button" @click="timetable.retry()">补齐缺失周次</button>
+    </div>
+
+    <!-- 一周都没拿到：说人话 + 重试出路，不留死胡同 -->
+    <div v-else-if="timetable.error.value && !weeks.length" class="notice notice-error" role="alert">
+      <span class="notice-text">课表同步失败：{{ timetable.error.value }}</span>
+      <button class="notice-action" type="button" @click="timetable.retry()">重试</button>
+    </div>
 
     <p v-if="!ready" class="empty">
       登录后可以查看课表。未登录也能浏览此页面，只是没有数据。
@@ -198,6 +218,7 @@ watch(() => props.ready, startSync)
     <p class="note">
       课表来自教务处系统，与作业共用同一套统一身份认证，登录一次即可。
       数据按周缓存在本设备，切换周次不需要联网。
+      <span v-if="savedAtText">上次同步：{{ savedAtText }}。</span>
     </p>
   </section>
 </template>
@@ -280,10 +301,65 @@ h2 {
   border: 1px solid var(--line);
 }
 
-.notice.error {
+/* 三种状态提示：进行中（中性）、部分成功（黄）、彻底失败（红）。
+   都允许放一个 ≥44px 的行动按钮，错误永远给出路。 */
+.notice-sync {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.spin {
+  flex-shrink: 0;
+  animation: rotate 0.8s linear infinite;
+}
+
+@keyframes rotate {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.notice-warn {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+  color: var(--warn);
+  background: var(--warn-bg);
+  border-color: #fde68a;
+}
+
+.notice-warn .notice-text {
+  color: var(--warn);
+  line-height: 1.55;
+}
+
+.notice-error {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
   color: var(--error);
   background: var(--error-bg);
   border-color: var(--error-line);
+}
+
+.notice-error .notice-text {
+  color: var(--error);
+  line-height: 1.55;
+}
+
+.notice-action {
+  align-self: flex-start;
+  min-height: var(--touch);
+  padding: 0.4rem 1rem;
+  border: 1px solid currentColor;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  cursor: pointer;
 }
 
 .empty {

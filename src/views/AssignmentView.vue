@@ -4,6 +4,8 @@ import { auth } from '../composables/auth.js'
 import { assignmentsStore } from '../composables/assignments.js'
 import { downloadResource } from '../api/files.js'
 import { buildAssignmentUrl } from '../utils/assignment-url.js'
+import { formatUpdatedAt } from '../utils/format.js'
+import { friendlyError } from '../utils/errors.js'
 
 const props = defineProps({
   /** 云邮登录态是否就绪。 */
@@ -37,6 +39,9 @@ const LEVEL_CARD_CLASS = {
 
 const downloadErrors = ref({})
 
+/** 「更新于 X」：数据新旧可感知。 */
+const savedAtText = computed(() => formatUpdatedAt(assignmentsStore.savedAt.value))
+
 /** 截止时间的口语化表述：今天/明天直接点名，其余落回「月/日 时:分」。
  *  deadline 是无时区的北京时间墙上钟，因此也按北京日期比较；
  *  格式不合预期（脏数据）时返回空串，宁可不显示也不给垃圾文本。 */
@@ -56,7 +61,8 @@ async function download(attachment) {
   try {
     await downloadResource(attachment.resourceId, attachment.resourceName)
   } catch (error) {
-    downloadErrors.value[attachment.resourceId] = error.message || '下载失败'
+    // 网络黑话（Failed to fetch）换成人话，附上重试方式（再点一次即可）
+    downloadErrors.value[attachment.resourceId] = friendlyError(error)
   }
 }
 
@@ -81,14 +87,28 @@ const groups = computed(() => assignmentsStore.groups.value)
       </span>
     </header>
 
+    <!-- 有缓存数据但刷新失败：数据照常可用，黄条说明来龙去脉（独立于列表渲染链） -->
+    <div v-if="ready && assignmentsStore.stale.value" class="notice notice-warn" role="status">
+      <span class="notice-text">
+        作业刷新失败：{{ assignmentsStore.error.value }}。
+        <span v-if="savedAtText">以下为 {{ savedAtText }} 缓存的数据。</span>
+        截止时间过了的话，列表可能已经变化。
+      </span>
+      <button class="notice-action" type="button" @click="assignmentsStore.retry()">重新刷新</button>
+    </div>
+
     <p v-if="!ready" class="empty">
       登录后可以查看作业列表、下载附件，并直接跳转到提交页。
       未登录也能浏览此页面，只是没有数据。
     </p>
-    <p v-else-if="assignmentsStore.state.value === 'loading'" class="empty">正在获取作业…</p>
-    <p v-else-if="assignmentsStore.state.value === 'error'" class="notice error" role="alert">
-      {{ assignmentsStore.error.value }}
-    </p>
+    <p v-else-if="assignmentsStore.state.value === 'loading' && !groups.length" class="empty">正在获取作业…</p>
+
+    <!-- 彻底失败（手里没有任何数据）：说人话 + 重试出路 -->
+    <div v-else-if="assignmentsStore.state.value === 'error'" class="notice notice-error" role="alert">
+      <span class="notice-text">作业列表获取失败：{{ assignmentsStore.error.value }}</span>
+      <button class="notice-action" type="button" @click="assignmentsStore.retry()">重试</button>
+    </div>
+
     <p v-else-if="!groups.length" class="empty">本学期没有作业记录。</p>
 
     <template v-else>
@@ -125,7 +145,12 @@ const groups = computed(() => assignmentsStore.groups.value)
               <p class="detail-hint">正在加载附件…</p>
             </template>
             <template v-else-if="assignmentsStore.attachmentState.value[assignment.id] === 'error'">
-              <p class="detail-hint">附件加载失败，可重试展开</p>
+              <p class="detail-hint">附件加载失败，可能是网络不稳定。</p>
+              <button
+                class="notice-action notice-action-inline"
+                type="button"
+                @click="assignmentsStore.retryAttachment(assignment.id)"
+              >重试加载附件</button>
             </template>
             <template v-else>
               <p v-if="!assignmentsStore.attachments.value[assignment.id]?.length" class="detail-hint">
@@ -161,6 +186,7 @@ const groups = computed(() => assignmentsStore.groups.value)
 
     <p class="note">
       作业来自云邮教学空间。按紧急度排序：已逾期 → 今天/明天截止 → 一周内 → 待完成 → 已提交。
+      <span v-if="savedAtText && !assignmentsStore.stale.value">数据更新于 {{ savedAtText }}。</span>
     </p>
   </section>
 </template>
@@ -199,14 +225,65 @@ h2 {
   }
 }
 
-.notice.error {
+/* 状态提示与课表视图同一套语言：红=彻底失败（带重试），黄=有数据但刷新失败 */
+.notice-error {
   margin: 0;
-  padding: 0.5rem 0.75rem;
+  padding: 0.625rem 0.75rem;
   border-radius: var(--radius-sm);
-  font-size: 0.8125rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
   color: var(--error);
   background: var(--error-bg);
   border: 1px solid var(--error-line);
+  font-size: 0.8125rem;
+}
+
+.notice-warn {
+  margin: 0;
+  padding: 0.625rem 0.75rem;
+  border-radius: var(--radius-sm);
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+  color: var(--warn);
+  background: var(--warn-bg);
+  border: 1px solid #fde68a;
+  font-size: 0.8125rem;
+}
+
+.notice-text {
+  line-height: 1.55;
+}
+
+.notice-action {
+  align-self: flex-start;
+  min-height: var(--touch);
+  padding: 0.4rem 1rem;
+  border: 1px solid currentColor;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.notice-action-inline {
+  justify-self: start;
+  color: var(--brand-600);
+  border-color: var(--brand-500);
+}
+
+@media (prefers-color-scheme: dark) {
+  .notice-warn {
+    border-color: #55461a;
+  }
+
+  .notice-action-inline {
+    color: var(--brand-500);
+  }
 }
 
 .empty {
