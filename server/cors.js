@@ -42,6 +42,11 @@ export function backendCors(allowedOrigins = []) {
     )) {
       c.header(name, value)
     }
+    // 未命中白名单也要带 Vary：共享缓存可能把「无 CORS 头」的响应原样发给
+    // 放行来源，让对方的合法跨域请求拿不到 CORS 头而失败。
+    if (!c.req.header('Origin') || !allowedOrigins.includes(c.req.header('Origin'))) {
+      c.header('Vary', 'Origin')
+    }
 
     if (c.req.method === 'OPTIONS') return c.body(null, 204)
 

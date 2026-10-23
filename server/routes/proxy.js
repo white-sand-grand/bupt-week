@@ -120,7 +120,8 @@ export function mountProxyRoutes(app, { allowedOrigins = [] } = {}) {
     }
 
     // 中间件设的 CORS 头对原始 Response 不生效，这里自己补。
-    const cors = corsHeadersFor(c.req.header('Origin') || '', allowedOrigins)
+    // Vary: Origin 无条件带：共享缓存可能把「无 CORS 头」的响应错发给放行来源。
+    const cors = { Vary: 'Origin', ...corsHeadersFor(c.req.header('Origin') || '', allowedOrigins) }
     return normalizeProxyResponse(response, cors)
   }
 

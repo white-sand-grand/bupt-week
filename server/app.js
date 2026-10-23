@@ -38,8 +38,9 @@ export function createBackend({ getSessionStore = null, allowedOrigins = [], fro
   app.notFound((c) => c.json({ success: false, msg: '接口不存在' }, 404))
   app.onError((error, c) => {
     if (error instanceof ApiError) return c.json(error.body, error.status)
+    // 未知异常的 message 可能带内部细节（堆栈、上游地址），只进日志不进响应。
     console.error('[backend] 未处理的错误', error)
-    return c.json({ success: false, msg: error.message || '请求失败' }, 500)
+    return c.json({ success: false, msg: '服务器内部错误，请稍后再试' }, 500)
   })
 
   return app

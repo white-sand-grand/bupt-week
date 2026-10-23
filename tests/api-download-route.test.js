@@ -14,6 +14,7 @@ function makeApp() {
 test('POST /api/ucloud/resource/download：解析成功并返回 /file 路径', async (t) => {
   const { app, store } = makeApp()
   await store.set('sid-1', {
+    kind: 'ucloud',
     accessToken: 'blade-token',
     expiresAt: Date.now() + TTL,
   })

@@ -14,7 +14,7 @@ export function createApiRoutes({ getSessionStore }) {
     const { sessionId, resourceId } = await readJson(c.req.raw)
 
     const session = await getSessionStore().get(sessionId)
-    if (!session) {
+    if (!session || session.kind !== 'ucloud') {
       throw new ApiError(401, { stage: 'ucloud-auth', msg: '云邮登录已过期，请重新登录' })
     }
 

@@ -106,7 +106,18 @@ export function createBackend({ getSessionStore, allowedOrigins }) { … }
 
 ### CORS
 
-后端默认只允许自己的 Pages 来源。跨域配置覆盖 JSON、鉴权头、文件 Range 请求；登录凭证走请求头/请求体，**不依赖跨站 Cookie**。
+后端默认只允许自己的 Pages 来源。跨域配置覆盖 JSON、鉴权头、文件 Range 请求；登录凭证走请求头/请求体，**不依赖跨站 Cookie**。所有响应（含未命中白名单的）都带 `Vary: Origin`，防止共享缓存把无 CORS 头的响应错发给放行来源。
+
+### 其他边界（2026-10-24 安全审查后固化）
+
+| 机制 | 位置 | 作用 |
+|---|---|---|
+| 企微 state 一次性绑定 | `routes/auth.js` | start 把 CAS state 存 HttpOnly+Secure cookie，callback 对不上即拒绝——回流必出自本站发起的流程 |
+| 前端地址只认白名单 | `routes/auth.js` | `/wecom/start` 的 Referer 必须命中 `CORS_ORIGINS` 才种前端 cookie，防 sessionId 被 302 到任意地址 |
+| 登录限速 | `rate-limit.js` | 同 IP 10 分钟 10 次密码错后 429（只数 401）；分布式攻击靠 Cloudflare WAF 兜底 |
+| `/file` 来源准入 | `routes/proxy.js` | 带 Origin/Referer 的请求必须命中白名单（回环放行供本机开发），防外链滥用 |
+| 未知异常兜底 | `app.js` | 非 ApiError 异常响应固定文案，内部细节只进日志 |
+| 密码可证明不留痕 | `tests/privacy.test.js` | 断言密码不进响应体、不进三种会话存储、不进日志、失败不回显 |
 
 ## 5. 错误处理约定
 
