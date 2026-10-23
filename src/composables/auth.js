@@ -127,6 +127,12 @@ export const auth = {
     return Boolean(ucloud.value || jwgl.value)
   },
 
+  /** 某一侧的 sessionId（课表/作业模块直接取用）；该侧未登录返回空串。 */
+  sessionIdFor(kind) {
+    const side = kind === 'jwgl' ? jwgl.value : ucloud.value
+    return side?.sessionId || ''
+  },
+
   async signOut() {
     const ucloudId = ucloud.value?.sessionId
     const jwglId = jwgl.value?.sessionId

@@ -1,6 +1,7 @@
 import { Hono } from 'hono'
 import { ApiError, readJson } from '../http.js'
 import { resolveResourceDownload } from '../services/resources.js'
+import { fetchTimetable } from '../services/timetable.js'
 
 /**
  * 本站自己的业务接口。
@@ -24,6 +25,30 @@ export function createApiRoutes({ getSessionStore }) {
     })
 
     return c.json({ success: true, data: { fileUrl } })
+  })
+
+  routes.post('/jwgl/timetable', async (c) => {
+    const { sessionId, week, mode } = await readJson(c.req.raw)
+
+    const store = getSessionStore()
+    const session = await store.get(sessionId)
+    if (!session || session.kind !== 'jwgl') {
+      throw new ApiError(401, { stage: 'jwgl-auth', msg: '教务登录已过期，请重新登录' })
+    }
+
+    let result
+    try {
+      result = await fetchTimetable({ cookies: session.cookies, week, mode })
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401) await store.delete(sessionId)
+      throw error
+    }
+
+    if (result.cookies !== session.cookies) {
+      await store.set(sessionId, { ...session, cookies: result.cookies })
+    }
+
+    return c.json({ success: true, data: { timetable: result.timetable } })
   })
 
   return routes

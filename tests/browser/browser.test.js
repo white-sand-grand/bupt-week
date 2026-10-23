@@ -676,6 +676,103 @@ test('微信里即便不自动跳，手动企业微信登录按钮也在（兜�
   await context.close()
 })
 
+// ── 课表 ────────────────────────────────────────────────────────────────────
+
+/** 课表接口的 mock：不带 week 返回第 18 周（当前），带 week=19 返回第 19 周。 */
+function mockTimetable(route) {
+  const body = route.request().postDataJSON() || {}
+  const week = body.week ?? 18
+  const monday = week === 18 ? '2026-10-26' : '2026-11-02'
+  const dayDate = (i) => {
+    const d = new Date(`${monday}T00:00:00Z`)
+    d.setUTCDate(d.getUTCDate() + i)
+    return d.toISOString().slice(0, 10)
+  }
+  return fulfill(route, {
+    success: true,
+    data: {
+      timetable: {
+        week,
+        mode: 'A'.repeat(32),
+        date: monday,
+        weeks: [18, 19],
+        modes: [],
+        days: Array.from({ length: 7 }, (_, i) => ({ label: `星期${'一二三四五六日'[i]}`, date: dayDate(i) })),
+        periods: [
+          { number: 1, time: '08:00~08:45' },
+          { number: 2, time: '08:55~09:40' },
+        ],
+        courses: [
+          { name: '高等数学', day: 1, start: 1, end: 2, location: '教三-101', campus: '西土城', schedule: '[1-2]节', details: [] },
+          { name: '大学英语', day: 3, start: 2, end: 2, location: '教四-202', campus: '西土城', schedule: '[2]节', details: [] },
+        ],
+      },
+    },
+  })
+}
+
+async function loginAndOpenTimetable(page) {
+  await page.route('**/api/auth/login', (route) => fulfill(route, LOGIN_OK))
+  await page.route('**/api/jwgl/session', (route) => fulfill(route, { success: true, data: { sessionId: 'jw-sid', username: '2021001234', expiresAt: EXPIRES_AT } }))
+  await page.route('**/api/ucloud/session', (route) => fulfill(route, UCLOUD_SESSION))
+  await page.route('**/api/jwgl/timetable', mockTimetable)
+
+  await page.goto(APP_ORIGIN, { waitUntil: 'networkidle' })
+  await page.fill(`${panel} input[type="text"]`, '2021001234')
+  await page.fill(`${panel} input[type="password"]`, 'pw')
+  await page.click(`${panel} button[type="submit"]`)
+  await page.waitForFunction(() => document.querySelectorAll('.panel').length === 0)
+}
+
+test('课表：登录后渲染网格，课程落在正确的星期与节次', async () => {
+  const page = await browser.newPage()
+  try {
+    await loginAndOpenTimetable(page)
+    await page.waitForSelector('.grid')
+
+    // 第 1 节 · 星期一 有高等数学
+    const mondayCell = await page.textContent('.grid tbody tr:nth-child(1) td:nth-child(2)')
+    assert.match(mondayCell, /高等数学/)
+
+    // 第 2 节 · 星期一 是课程的延续（不重复课名）；第 2 节 · 星期三 是大学英语
+    const mondayCont = await page.textContent('.grid tbody tr:nth-child(2) td:nth-child(2)')
+    assert.equal(mondayCont.includes('高等数学'), false, '延续节次不该重复课名')
+    const wednesday = await page.textContent('.grid tbody tr:nth-child(2) td:nth-child(4)')
+    assert.match(wednesday, /大学英语/)
+
+    // 周次下拉有同步到的两周
+    const options = await page.locator('.week-picker option').allTextContents()
+    assert.equal(options.length, 2)
+  } finally {
+    await page.close()
+  }
+})
+
+test('课表：切换周次只读缓存，不再请求后端', async () => {
+  const page = await browser.newPage()
+  try {
+    await loginAndOpenTimetable(page)
+    await page.waitForSelector('.grid')
+    // 等同步彻底结束（两周都拿到）
+    await page.waitForFunction(() => document.querySelectorAll('.week-picker option').length === 2)
+
+    let requests = 0
+    page.on('request', (request) => {
+      if (request.url().includes('/api/jwgl/timetable')) requests += 1
+    })
+
+    await page.selectOption('.week-picker select', '19')
+    await page.waitForTimeout(500)
+
+    assert.equal(requests, 0, '切周不该再发请求')
+    // 第 19 周的周一日期变了
+    const date = await page.textContent('.grid thead th:nth-child(2) .day-date')
+    assert.equal(date, '11-02')
+  } finally {
+    await page.close()
+  }
+})
+
 // ── 部署形态：Pages + 独立后端 ───────────────────────────────────────────────
 
 /**

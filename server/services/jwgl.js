@@ -47,7 +47,8 @@ export function encodeInp(value) {
   return output
 }
 
-function isLoginPage(html) {
+/** 登录页判据：命中即视为会话失效。课表取数（services/timetable.js）也复用。 */
+export function isLoginPage(html) {
   return (
     html.includes('/jsxsd/xk/LoginToXk') ||
     html.includes('id="userAccount"') ||
@@ -62,7 +63,8 @@ function parseText(html) {
 
 // ── Cookie 罐 ───────────────────────────────────────────────────────────────
 
-function parseSetCookies(response) {
+/** 提取响应的 Set-Cookie 为「k=v; k=v」串。课表取数也复用。 */
+export function parseSetCookies(response) {
   if (typeof response.headers.getSetCookie === 'function') {
     const list = response.headers.getSetCookie()
     if (list.length > 0) {
@@ -74,7 +76,8 @@ function parseSetCookies(response) {
   return raw.split(',').map((item) => item.trim().split(';')[0]).filter(Boolean).join('; ')
 }
 
-function buildHeaders(cookies, extra = {}) {
+/** 带 Cookie 罐与 UA 的请求头。课表取数也复用。 */
+export function buildHeaders(cookies, extra = {}) {
   const headers = { 'User-Agent': 'Mozilla/5.0', ...extra }
   if (cookies && cookies.trim()) headers.Cookie = cookies
   return headers
