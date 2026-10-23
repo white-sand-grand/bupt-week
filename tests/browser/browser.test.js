@@ -323,6 +323,11 @@ test('登录后面板收起，顶栏显示姓名，视图仍可切换', async ()
   const page = await browser.newPage()
   try {
     await page.route('**/api/auth/login', (route) => fulfill(route, LOGIN_OK))
+    await page.route('**/api/jwgl/session', (route) => fulfill(route, { success: true, data: { sessionId: 'jw-sid', username: '2021001234', expiresAt: EXPIRES_AT } }))
+    await page.route('**/api/ucloud/session', (route) => fulfill(route, UCLOUD_SESSION))
+    await page.route('**/api/ucloud/assignments', (route) =>
+      fulfill(route, { success: true, data: { assignments: [] } }),
+    )
 
     await page.goto(APP_ORIGIN, { waitUntil: 'networkidle' })
     await page.fill(`${panel} input[type="text"]`, '2021001234')
@@ -333,11 +338,10 @@ test('登录后面板收起，顶栏显示姓名，视图仍可切换', async ()
     await page.waitForFunction(() => document.querySelectorAll('.panel').length === 0)
     assert.match(await page.textContent('.topbar-auth'), /张三/)
 
-    // 视图照常可切
+    // 视图照常可切；已登录时作业视图走真实数据链路（mock 空列表 → 空态文案）
     await page.click('.tabs button:nth-child(2)')
     assert.equal(await page.textContent('.view h2'), '作业')
-    // 已登录时的空状态文案不同——说的是"正在开发中"，不是"请登录"
-    assert.match(await page.textContent('.view .empty'), /正在开发中/)
+    await page.waitForFunction(() => document.querySelector('.view .empty')?.textContent.includes('没有作业记录'))
   } finally {
     await page.close()
   }
@@ -768,6 +772,124 @@ test('课表：切换周次只读缓存，不再请求后端', async () => {
     // 第 19 周的周一日期变了
     const date = await page.textContent('.grid thead th:nth-child(2) .day-date')
     assert.equal(date, '11-02')
+  } finally {
+    await page.close()
+  }
+})
+
+// ── 作业 ────────────────────────────────────────────────────────────────────
+
+/** 北京时间墙上钟字符串（学校接口的格式），相对当前时间偏移 offsetMs。 */
+function beijingClockFromNow(offsetMs) {
+  return new Date(Date.now() + offsetMs).toLocaleString('sv-SE', { timeZone: 'Asia/Shanghai' })
+}
+
+const ASSIGNMENTS_FIXTURE = () => ({
+  success: true,
+  data: {
+    assignments: [
+      {
+        id: 'hw-lab0',
+        siteId: 's2',
+        siteName: '操作系统',
+        assignmentTitle: 'lab0 环境配置',
+        assignmentEndTime: beijingClockFromNow(-24 * 3600_000),
+        assignmentStatus: 99,
+      },
+      {
+        id: 'hw-exp1',
+        siteId: 's1',
+        siteName: '数据结构',
+        assignmentTitle: '实验一 线性表',
+        assignmentEndTime: beijingClockFromNow(20 * 3600_000),
+        assignmentStatus: 99,
+      },
+      {
+        id: 'hw-exp2',
+        siteId: 's1',
+        siteName: '数据结构',
+        assignmentTitle: '实验二 树',
+        assignmentEndTime: beijingClockFromNow(-48 * 3600_000),
+        assignmentStatus: 0,
+        submitTime: beijingClockFromNow(-72 * 3600_000),
+      },
+    ],
+  },
+})
+
+async function loginAndOpenAssignments(page) {
+  await page.route('**/api/auth/login', (route) => fulfill(route, LOGIN_OK))
+  await page.route('**/api/jwgl/session', (route) => fulfill(route, { success: true, data: { sessionId: 'jw-sid', username: '2021001234', expiresAt: EXPIRES_AT } }))
+  await page.route('**/api/ucloud/session', (route) => fulfill(route, UCLOUD_SESSION))
+  await page.route('**/api/ucloud/assignments', (route) => fulfill(route, ASSIGNMENTS_FIXTURE()))
+
+  await page.goto(APP_ORIGIN, { waitUntil: 'networkidle' })
+  await page.fill(`${panel} input[type="text"]`, '2021001234')
+  await page.fill(`${panel} input[type="password"]`, 'pw')
+  await page.click(`${panel} button[type="submit"]`)
+  await page.waitForFunction(() => document.querySelectorAll('.panel').length === 0)
+  await page.click('.tabs button:nth-child(2)')
+}
+
+test('作业：按紧急度排序、按课程分组、状态徽标正确', async () => {
+  const page = await browser.newPage()
+  try {
+    await loginAndOpenAssignments(page)
+    await page.waitForSelector('.card')
+
+    // 全局排序后分组：最紧急的逾期作业所在课程在最前
+    const groupNames = await page.locator('.course-group h3').allTextContents()
+    assert.match(groupNames[0], /操作系统/)
+    assert.match(groupNames[1], /数据结构/)
+
+    // 卡片顺序：逾期 lab0 → 今天截止 实验一 → 已提交 实验二
+    const titles = await page.locator('.card-title').allTextContents()
+    assert.deepEqual(titles, ['lab0 环境配置', '实验一 线性表', '实验二 树'])
+
+    const badges = await page.locator('.card .badge').allTextContents()
+    assert.equal(badges[0], '已截止未交')
+    assert.equal(badges[1], '今天截止')
+    assert.equal(badges[2], '已提交')
+
+    // 顶栏计数：未完成 2（已提交的不算）
+    assert.match(await page.textContent('.counter'), /2 项未完成/)
+  } finally {
+    await page.close()
+  }
+})
+
+test('作业：展开懒加载附件，「去交作业」深链指向该作业详情页', async () => {
+  const page = await browser.newPage()
+  try {
+    await loginAndOpenAssignments(page)
+    await page.waitForSelector('.card')
+
+    await page.route('**/api/ucloud/assignment/detail', (route) => {
+      const body = route.request().postDataJSON() || {}
+      assert.equal(body.assignmentId, 'hw-lab0')
+      return fulfill(route, {
+        success: true,
+        data: {
+          attachments: [{ resourceId: 'r1', resourceName: 'lab0-handout.pdf', resourceType: 'pdf' }],
+        },
+      })
+    })
+
+    // 展开第一张卡（逾期作业）
+    await page.click('.card:nth-child(2) .card-main')
+    await page.waitForSelector('.attachment-list')
+
+    const attachment = await page.textContent('.attachment-list li button')
+    assert.match(attachment, /lab0-handout\.pdf/)
+
+    // 深链：§3.2 的详情页 URL，参数就是这份作业的 ID，且不带 refresh_token
+    const href = await page.getAttribute('.go-submit', 'href')
+    assert.equal(
+      href,
+      'https://ucloud.bupt.edu.cn/uclass/course.html#/student/assignmentDetails_fullpage?activeTabName=first&assignmentId=hw-lab0',
+    )
+    assert.equal(href.includes('refresh_token'), false, '深链不该携带长效凭证')
+    assert.equal(href.includes('studentAssignmentListPage'), false, '不能深链列表页（site-id cookie 缺口）')
   } finally {
     await page.close()
   }
