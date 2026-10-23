@@ -9,6 +9,9 @@ import { withUserAgent } from '../user-agent.js'
 const SESSION_TTL_MS = 7 * 86400000
 
 const UCLOUD_SERVICE = 'https://ucloud.bupt.edu.cn'
+
+// /wecom/start 时把前端地址存进这个 cookie，callback 时读出来
+const FRONTEND_COOKIE = 'bupt-week-frontend'
 const JWGL_SERVICE = 'https://jwgl.bupt.edu.cn/'
 
 function newSessionId() {
@@ -253,7 +256,23 @@ export function createAuthRoutes({ getSessionStore, frontendUrl = '' }) {
     const target = new URL(redirectUrl)
     target.searchParams.set('redirect', `${backendOrigin(c.req.url)}/api/auth/wecom/callback`)
 
-    return c.redirect(target.toString())
+    // 把前端地址记进 cookie。此刻用户是从我们页面点进来的，Referer 可信；
+    // 等 app.bupt 跳回 callback 时，Referer 已经变成 app.bupt 了，那时候再想
+    // 推断前端地址已经晚了。cookie 在本 worker 域名上，能撑过这一圈跳转。
+    const response = c.redirect(target.toString())
+    const referer = c.req.header('Referer') || ''
+    if (referer) {
+      try {
+        const origin = new URL(referer).origin
+        response.headers.set(
+          'Set-Cookie',
+          `${FRONTEND_COOKIE}=${encodeURIComponent(origin)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=900`,
+        )
+      } catch {
+        // Referer 不可解析就算了，callback 还有别的兜底
+      }
+    }
+    return response
   })
 
   /**
@@ -269,7 +288,7 @@ export function createAuthRoutes({ getSessionStore, frontendUrl = '' }) {
     const state = c.req.query('state') || ''
 
     if (!code || !state) {
-      return c.redirect(`${frontendOrigin(c, frontendUrl)}#/login?error=wecom-cancelled`)
+      return redirectToFrontend(c, frontendUrl, '#/login?error=wecom-cancelled')
     }
 
     const loginUrl = `https://auth.bupt.edu.cn/authserver/login?client_name=${CAS_CLIENTS.wecom}`
@@ -279,7 +298,7 @@ export function createAuthRoutes({ getSessionStore, frontendUrl = '' }) {
     try {
       response = await fetch(loginUrl, withUserAgent({ redirect: 'manual' }))
     } catch {
-      return c.redirect(`${frontendOrigin(c, frontendUrl)}#/login?error=wecom-connect`)
+      return redirectToFrontend(c, frontendUrl, '#/login?error=wecom-connect')
     }
 
     const location = response.headers.get('location') || ''
@@ -295,14 +314,18 @@ export function createAuthRoutes({ getSessionStore, frontendUrl = '' }) {
     if (!ticket) {
       // 到这一步失败，最可能是 CAS 不认被改过的 redirect，或者 code 已过期
       console.warn('[auth] 企业微信回调没拿到 ticket', { status: response.status, hasLocation: Boolean(location) })
-      return c.redirect(`${frontendOrigin(c, frontendUrl)}#/login?error=wecom-no-ticket`)
+      return redirectToFrontend(c, frontendUrl, '#/login?error=wecom-no-ticket')
     }
 
     const ucloud = await loginUcloudWithTicket(ticket)
     const sessionId = newSessionId()
     await getSessionStore().set(sessionId, { kind: 'ucloud', ...ucloud, expiresAt: expiresAt() })
 
-    return c.redirect(`${frontendOrigin(c, frontendUrl)}#/login?wecom=ok&sessionId=${encodeURIComponent(sessionId)}`)
+    return redirectToFrontend(
+      c,
+      frontendUrl,
+      `#/login?wecom=ok&sessionId=${encodeURIComponent(sessionId)}`,
+    )
   })
 
   return routes
@@ -317,22 +340,54 @@ function backendOrigin(requestUrl) {
 /**
  * 前端地址。企业微信流程最后要跳回前端。
  *
- * 取值优先级：环境变量 FRONTEND_URL > Referer 反推 > 后端自身地址。
- * 不能默认 localhost——用户可能是直接在微信里打开 start 地址的，
- * 那时没有 Referer，跳回 127.0.0.1 在手机上根本打不开。
+ * 取值优先级：环境变量 FRONTEND_URL > /wecom/start 时留下的 cookie。
+ *
+ * **不能用回调时的 Referer 推断。** 走到 callback 这一步，用户是从
+ * app.bupt.edu.cn 跳回来的，Referer 是 app.bupt 而不是我们的前端——
+ * 拿它当前端地址会把用户弹回 app.bupt。这是个实际踩过的坑。
+ *
+ * 两者都没有时返回空字符串，由调用方给出明确提示，而不是猜一个地址把用户
+ * 送去一个 404 页面。
  */
 function frontendOrigin(context, configured) {
   if (configured) return configured.replace(/\/+$/, '') + '/'
 
-  const referer = context.req.header('Referer') || ''
-  if (referer) {
+  const cookie = readCookie(context, FRONTEND_COOKIE)
+  if (cookie) {
     try {
-      const url = new URL(referer)
-      // 带尾斜杠：拼出来是 http://host/#/login 而不是 http://host#/login
-      return `${url.protocol}//${url.host}/`
+      return `${new URL(cookie).origin}/`
     } catch {
-      // Referer 不可解析就落到后端自身地址
+      // cookie 内容不可解析就往下走
     }
   }
-  return backendOrigin(context.req.url) + '/'
+  return ''
+}
+
+function readCookie(context, name) {
+  const raw = context.req.header('Cookie') || ''
+  for (const part of raw.split(';')) {
+    const [key, ...value] = part.trim().split('=')
+    if (key === name) return decodeURIComponent(value.join('='))
+  }
+  return ''
+}
+
+/**
+ * 跳回前端。拿不到前端地址时返回一段明确的文字，而不是拼一个坏 URL 把用户
+ * 送到 404 页面——那种失败看起来像站点挂了，实际只是没配地址。
+ */
+function redirectToFrontend(context, configured, hash) {
+  const origin = frontendOrigin(context, configured)
+  if (!origin) {
+    return context.html(
+      '<!DOCTYPE html><meta charset="utf-8"><title>登录完成</title>'
+      + '<body style="font-family:system-ui;padding:2rem;line-height:1.7">'
+      + '<h2>企业微信登录已完成</h2>'
+      + '<p>但没能确定要跳回哪个页面。请手动打开站点首页，登录态已生效。</p>'
+      + '<p style="color:#888;font-size:.85rem">'
+      + '如果这是你自己部署的实例，在后端设置 FRONTEND_URL 环境变量即可自动跳回。'
+      + '</p></body>',
+    )
+  }
+  return context.redirect(`${origin}${hash}`)
 }

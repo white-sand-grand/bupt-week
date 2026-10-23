@@ -230,7 +230,7 @@ test('GET /api/auth/wecom/callback：拿到 ticket 后登录并跳回前端', as
   })
 
   const response = await app.request('/api/auth/wecom/callback?code=CODE123&state=TST-109420-abc', {
-    headers: { Referer: 'http://127.0.0.1:5173/' },
+    headers: { Cookie: 'bupt-week-frontend=' + encodeURIComponent('http://127.0.0.1:5173') },
   })
 
   assert.equal(response.status, 302)
@@ -249,7 +249,7 @@ test('GET /api/auth/wecom/callback：code 或 state 缺失时跳回前端报错'
   const { app } = makeApp()
   for (const query of ['', '?code=only', '?state=only']) {
     const response = await app.request(`/api/auth/wecom/callback${query}`, {
-      headers: { Referer: 'http://127.0.0.1:5173/' },
+      headers: { Cookie: 'bupt-week-frontend=' + encodeURIComponent('http://127.0.0.1:5173') },
     })
     assert.equal(response.status, 302)
     assert.match(response.headers.get('location'), /error=wecom-cancelled/)
@@ -263,7 +263,7 @@ test('GET /api/auth/wecom/callback：CAS 没给 ticket 时跳回前端报错', a
   )
 
   const response = await app.request('/api/auth/wecom/callback?code=C&state=S', {
-    headers: { Referer: 'http://127.0.0.1:5173/' },
+    headers: { Cookie: 'bupt-week-frontend=' + encodeURIComponent('http://127.0.0.1:5173') },
   })
 
   assert.equal(response.status, 302)
@@ -277,7 +277,7 @@ test('GET /api/auth/wecom/callback：CAS 连不上时跳回前端报错', async 
   })
 
   const response = await app.request('/api/auth/wecom/callback?code=C&state=S', {
-    headers: { Referer: 'http://127.0.0.1:5173/' },
+    headers: { Cookie: 'bupt-week-frontend=' + encodeURIComponent('http://127.0.0.1:5173') },
   })
 
   assert.match(response.headers.get('location'), /error=wecom-connect/)
@@ -323,7 +323,7 @@ test('wecom/callback：配了 FRONTEND_URL 时跳回它，不依赖 Referer', as
   )
 })
 
-test('wecom/callback：没配 FRONTEND_URL 又没有 Referer 时，跳回后端自身而不是 localhost', async (t) => {
+test('wecom/callback：什么线索都没有时给出明确提示，而不是拼个 404', async (t) => {
   const { app } = makeApp()
   t.mock.method(globalThis, 'fetch', async (url) => {
     if (String(url).includes('client_name=mc-wx')) {
@@ -339,10 +339,67 @@ test('wecom/callback：没配 FRONTEND_URL 又没有 Referer 时，跳回后端�
     return json({})
   })
 
+  // 没配 FRONTEND_URL、也没有 start 时种下的 cookie
   const response = await app.request('/api/auth/wecom/callback?code=C&state=S')
+  const text = await response.text()
+
+  assert.equal(response.status, 200)
+  assert.match(text, /企业微信登录已完成/)
+  assert.match(text, /手动打开站点首页/)
+  // 不该把用户送去一个 404 页面——那种失败看起来像站点挂了
+  assert.equal(response.headers.get('location'), null)
+})
+
+test('wecom/callback：Referer 是 app.bupt 时不能拿它当前端地址', async (t) => {
+  const { app } = makeApp()
+  t.mock.method(globalThis, 'fetch', async (url) => {
+    if (String(url).includes('client_name=mc-wx')) {
+      return new Response(null, {
+        status: 302,
+        headers: { Location: 'https://ucloud.bupt.edu.cn?ticket=ST-x' },
+      })
+    }
+    if (String(url).includes('oauth/token')) return json({ access_token: 't', refresh_token: 'r' })
+    if (String(url).includes('ykt-basics/info')) {
+      return json({ code: 200, success: true, data: { id: '1', realName: '王五' } })
+    }
+    return json({})
+  })
+
+  // 走到 callback 时 Referer 必然是 app.bupt——那是跳转来源，不是我们的前端。
+  // 拿它当前端地址会把用户弹回 app.bupt。
+  const response = await app.request('/api/auth/wecom/callback?code=C&state=S', {
+    headers: { Referer: 'https://app.bupt.edu.cn/uc/wap/login?redirect=x' },
+  })
   const location = response.headers.get('location')
 
-  assert.equal(response.status, 302)
-  assert.equal(location.includes('127.0.0.1'), false, '不能跳回 localhost，手机上打不开')
-  assert.match(location, /^http:\/\/localhost\/#\/login\?wecom=ok&sessionId=/)
+  assert.equal(location, null, `不该跳转，实际跳到了 ${location}`)
+  assert.match(await response.text(), /手动打开站点首页/)
+})
+
+test('wecom/start：把前端地址种进 cookie，callback 才能跳回去', async (t) => {
+  const { app } = makeApp()
+  t.mock.method(globalThis, 'fetch', async () =>
+    new Response(null, {
+      status: 302,
+      headers: {
+        Location:
+          'https://app.bupt.edu.cn/uc/api/oauth/index?response_type=code&appid=200210806102757400'
+          + '&redirect=https%3A%2F%2Fauth.bupt.edu.cn%2Fauthserver%2Flogin%3Fclient_name%3Dmc-wx'
+          + '&state=TST-1',
+      },
+    }),
+  )
+
+  // 此刻用户是从我们页面点进来的，Referer 可信
+  const response = await app.request('/api/auth/wecom/start', {
+    headers: { Referer: 'https://white-sand-grand.github.io/bupt-week/' },
+  })
+
+  const cookie = response.headers.get('Set-Cookie') || ''
+  assert.match(cookie, /bupt-week-frontend=/)
+  assert.match(cookie, /white-sand-grand\.github\.io/)
+  // SameSite=Lax：顶级 GET 跳转才会带上它，否则 app.bupt 回来时丢了
+  assert.match(cookie, /SameSite=Lax/)
+  assert.match(cookie, /HttpOnly/)
 })
