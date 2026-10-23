@@ -1,7 +1,9 @@
 import { test, before, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { extname, resolve } from 'node:path'
 import { chromium, devices } from 'playwright'
 import { serve } from '@hono/node-server'
 import { createServer as createViteServer } from 'vite'
@@ -625,4 +627,92 @@ test('微信里即便不自动跳，手动企业微信登录按钮也在（兜�
   assert.equal(await page.textContent('.wecom'), '企业微信登录')
   assert.equal(await page.getAttribute('.wecom', 'href'), '/api/auth/wecom/start')
   await context.close()
+})
+
+// ── 部署形态：Pages + 独立后端 ───────────────────────────────────────────────
+
+/**
+ * 这一组验的是**真实部署形态**（Pages + Workers 分离）下的行为。
+ *
+ * 之前在这里栽过：企微登录按钮写的是相对路径 `/api/auth/wecom/start`，
+ * 本机能跑（Vite 把 /api 代理到后端），部署到 Pages 后解析到
+ * white-sand-grand.github.io/api/... 直接 404。本地一切正常，压根发现不了。
+ *
+ * 所以要把 VITE_BACKEND_URL 设成一个哨兵值，构建出 dist/，
+ * 起静态服务器 Serve 它，再用真浏览器打开——和线上唯一的差别是域名。
+ */
+const SENTINEL = 'https://backend.example.invalid'
+const STATIC_PORT = 4173
+const STATIC_ORIGIN = `http://127.0.0.1:${STATIC_PORT}`
+
+async function serveDist() {
+  const dist = resolve(process.cwd(), 'dist')
+  const types = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css' }
+  const server = createServer((request, response) => {
+    const path = request.url === '/' ? '/index.html' : request.url.split('?')[0]
+    const file = resolve(dist, `.${path}`)
+    if (!file.startsWith(dist) || !existsSync(file)) {
+      response.writeHead(404).end('not found')
+      return
+    }
+    response.writeHead(200, { 'Content-Type': types[extname(file)] || 'application/octet-stream' })
+    response.end(readFileSync(file))
+  })
+  staticServers.push(server)
+  await listen(server, STATIC_PORT)
+}
+
+test('部署形态下企微登录指向后端域名，不是 Pages 自己的', async () => {
+  // 用哨兵后端地址构建，模拟线上 Pages + Workers 分离
+  execFileSync('npm', ['run', 'build'], {
+    cwd: process.cwd(),
+    env: { ...process.env, VITE_BACKEND_URL: SENTINEL },
+    stdio: 'pipe',
+  })
+  await serveDist()
+
+  const context = await browser.newContext({ userAgent: WECHAT_UA })
+  const page = await context.newPage()
+  try {
+    await context.addInitScript(() => {
+      // 避免自动跳转把页面带走，才能断言 href
+      sessionStorage.setItem('bupt-week-auto-wecom-tried', '1')
+    })
+
+    await page.goto(STATIC_ORIGIN, { waitUntil: 'networkidle' })
+
+    const href = await page.getAttribute('.wecom', 'href')
+    assert.ok(href, '企微登录按钮应存在')
+    assert.equal(
+      href,
+      `${SENTINEL}/api/auth/wecom/start`,
+      '必须指向后端域名——相对路径在 Pages 上会 404',
+    )
+    assert.notEqual(href.startsWith('/'), true, '不能是相对路径')
+  } finally {
+    await context.close()
+  }
+})
+
+test('部署形态下接口请求也打到后端域名', async () => {
+  const page = await browser.newPage()
+  try {
+    const requested = []
+    page.on('request', (request) => {
+      if (request.url().includes('/api/')) requested.push(request.url())
+    })
+
+    await page.goto(STATIC_ORIGIN, { waitUntil: 'networkidle' })
+    await page.waitForTimeout(1500)
+
+    assert.ok(requested.length > 0, '应当有 /api 请求')
+    for (const url of requested) {
+      assert.ok(
+        url.startsWith(SENTINEL),
+        `请求打到了别的域名：${url}（相对路径在 Pages 上会 404）`,
+      )
+    }
+  } finally {
+    await page.close()
+  }
 })

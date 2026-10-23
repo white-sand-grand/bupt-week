@@ -1,4 +1,4 @@
-import { api } from './client.js'
+import { api, backendUrl } from './client.js'
 
 /**
  * 登录接口。
@@ -11,8 +11,13 @@ import { api } from './client.js'
 export const login = (username, password) =>
   api('/api/auth/login', { method: 'POST', body: { username, password } })
 
-/** 企业微信 / 微信内自动识别的入口。浏览器跳转，不走 fetch。 */
-export const wecomStartUrl = '/api/auth/wecom/start'
+/**
+ * 企业微信 / 微信内自动识别的入口。
+ *
+ * 这是浏览器跳转（<a href> 和 location.href），不是 fetch——
+ * 所以必须自己拼后端地址，不能指望 api() 帮忙。
+ */
+export const wecomStartUrl = backendUrl('/api/auth/wecom/start')
 
 export const checkUcloudSession = (sessionId) =>
   api('/api/ucloud/session', { method: 'POST', body: { sessionId } })

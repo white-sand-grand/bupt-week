@@ -1,4 +1,4 @@
-import { api } from './client.js'
+import { api, backendUrl } from './client.js'
 
 /**
  * 附件下载。
@@ -34,7 +34,8 @@ export async function resolveResourceDownload(resourceId) {
  * @param {string} filename 保存用的文件名
  */
 export async function downloadFile(fileUrl, filename) {
-  const response = await fetch(fileUrl)
+  // fileUrl 是后端返回的 /file/... 相对路径，同样要拼上后端地址
+  const response = await fetch(backendUrl(fileUrl))
   if (!response.ok) {
     throw new Error(`下载失败（HTTP ${response.status}）`)
   }
