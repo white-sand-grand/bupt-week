@@ -101,41 +101,31 @@ npm run dev             # → http://127.0.0.1:5173
 
 ### 当前进度
 
-第 0 期（脚手架与登录实验）已完成，并额外落地了**作业附件下载**的后端与前端模块：
+三大功能已全部落地（2026-10-24 全产品交付，详见 [`docs/delivery-report-2026-10-24.md`](docs/delivery-report-2026-10-24.md)）：
 
 | 能力 | 状态 |
 |---|---|
 | 后端工厂、三种会话存储、双入口 | ✅ |
-| `/file` 代理（S3 防盗链绕过、Range、防穿越） | ✅ |
-| 附件下载接口 `POST /api/ucloud/resource/download` | ✅ |
-| 前端 `downloadResource(resourceId, filename)` | ✅ |
-| 挂到作业卡片上 | ⬜ 等第 3 期作业列表 |
-| **统一登录**（一个表单，一次认证登两个系统） | ✅ |
-| CAS SSO 双 ticket（一次认证，两个 service） | ✅ |
-| 教务处 CAS 入口（ticket → 会话） | ⬜ 端点待校园网验证，已配 `encodeInp` 回退 |
-| 企业微信 / 微信内自动识别 | ✅ 骨架 + 实测跳转，回流后两步待你在微信里验 |
-| token 静默续期（`access_token` 约 2 小时） | ✅ |
+| 统一登录（一个表单登两个系统）+ CAS SSO 双 ticket | ✅ |
+| 企业微信 / 微信内自动识别（state 一次性绑定） | ✅ 代码与 mock 链路完成，微信内实测待办 |
+| token 静默续期 | ✅ |
+| **课表**：解析、逐周缓存、周网格视图 | ✅ mock 全链路；真实教务数据需校园网验证 |
+| **作业**：全量列表、紧急度分级、按课程分组 | ✅ mock 全链路；真实数据待真实凭证验证 |
+| **附件下载**（挂在作业卡片上） | ✅ |
+| **交作业深链**（`buildAssignmentUrl` 集中一处） | ✅ 深链形状已断言；人工点验待办 |
+| 安全：企微防劫持、登录限速、/file 来源准入、隐私可证明 | ✅ 见 `docs/architecture.md` §4 |
 
-147 个接口测试 + 25 个浏览器测试全绿，Node 与 Workers 两条入口都验证过。
-浏览器侧验过的包括：Vue 应用真的挂载、下载落盘且文件名是附件名、CORS 放行与拦截、
-登录态在刷新后保持、localStorage 里只有 sessionId。
+181 个接口测试 + 31 个浏览器测试全绿，Node 与 Workers 两条入口都验证过。
+Windows 上 `npm test` / `npm run dev` / `npm run server` 可直接使用。
 
-**尚未实现**：课表（第 2 期）、作业列表（第 3 期）。顺序见 [`docs/roadmap.md`](docs/roadmap.md)。
-
-### 还没能验证的
-
-- **真实学号密码登录两个系统。** 我用不存在的学号打过真的 CAS，拿到了
-  `Invalid credentials.` + `stage: cas-login`，说明整条链路是通的；但**成功**
-  登录需要你的凭证。教务处上游（`jwgl.bupt.edu.cn`）从我这台机器不可达，
-  需要在校园网内试。
-- **`grant_type=password` 能否直连**（第 0 期实验 A）。当前走的是 CAS 三步，
-  MYUCLOUD 已验证过这条路。
+**待真实环境验收**（需要你的凭证 / 校园网，代码路径全部有 mock 测试覆盖）：
+真实学号密码登录、真实课表/作业数据、企微回流实测、深链人工点验。
 
 附件下载的链路与为什么必须经服务端，见 [`docs/api-reference.md`](docs/api-reference.md) 2.6–2.8 节。
 
 ```sh
-npm test            # 147 个接口/单元测试，不需要浏览器
-npm run test:browser # 14 个浏览器测试，需要 chromium
+npm test            # 181 个接口/单元测试，不需要浏览器
+npm run test:browser # 31 个浏览器测试，需要 chromium
 npm run build       # 前端构建，产物在 dist/（相对路径，适配 Pages）
 npx wrangler dev    # 本地 Workers 运行时，与 Node 入口共用同一份 server/
 ```

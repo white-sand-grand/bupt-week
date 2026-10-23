@@ -84,93 +84,66 @@
 
 ---
 
-## 第 2 期：课表
+## 第 2 期：课表 — ✅ 已完成（2026-10-24，mock 全链路；真实教务数据待校园网验证）
 
 **目标**：能看课表，断网不丢数据。
 
 ### 任务
 
-1. `parsers/timetable.js`：从 MYUCLOUD 移植（63 行，无依赖）
-2. `GET /api/jwgl/timetable?week=N`
-3. 首次登录后按周次列表全量同步，**每成功一周立刻写 localStorage**
-4. `TimetableGrid.vue` + `TimetablePage.vue`（周次切换、本周高亮、未同步周次提示）
-5. `utils/deadline.js` 暂不需要，但 `utils/timetable.js` 的缓存合并逻辑现在就要
+1. ✅ `services/timetable.js`：解析器从 MYUCLOUD 移植（fail-loud 保留）+ 取数
+2. ✅ `POST /api/jwgl/timetable`（sessionId 走请求体，项目约定优先于本文早期草稿）
+3. ✅ 首次登录后按周次列表全量同步，**每成功一周立刻写 localStorage**
+4. ✅ `TimetableView.vue`（周网格、周次切换、本周高亮、未同步周次提示）
+5. ✅ 缓存合并逻辑按 `username + mode + 学期` 隔离（`utils/timetable-cache.js`）
 
 ### 完成判据
 
-- [ ] 能看到本周课表，课程名/地点/节次正确
-- [ ] 能切换到任意已同步周次，**切换时不请求后端**
-- [ ] 同步中途杀掉网络，已拿到的周次仍在，提示「尚有 N 周未同步」
-- [ ] 重新登录后重新同步，未覆盖的周次保留旧数据
-- [ ] 课表页结构变更时**报错而不是显示半份错数据**（保留解析器的 fail-loud）
+- [x] 能看到本周课表，课程名/地点/节次正确（mock 上游 + 浏览器断言落位）
+- [x] 能切换到任意已同步周次，**切换时不请求后端**（浏览器断言零请求）
+- [x] 同步中途杀掉网络，已拿到的周次仍在，提示「尚有 N 周未同步」（partial 态）
+- [x] 重新登录后重新同步，未覆盖的周次保留旧数据（mergeTimetableWeek 单测）
+- [x] 课表页结构变更时**报错而不是显示半份错数据**（fail-loud 单测 ×3）
+- [ ] 真实教务账号拉到真实课表 —— 需要校园网，见交付报告遗留项
 
 ### 注意
 
-课表缓存按 `username + mode` 隔离。`mode`（`kbjcmsid`）是节次模式，不同模式下课表节次定义不同，混存会错位。
+课表缓存按 `username + mode` 隔离。`mode`（`kbjcmsid`）是节次模式，不同模式下课表节次定义不同，混存会错位。（另加学期隔离：跨学期自动重建。）
 
 ---
 
-## 第 3 期：作业与跳转链接
+## 第 3 期：作业与跳转链接 — ✅ 已完成（2026-10-24，mock 全链路；真实数据与人工点验待办）
 
 **目标**：核心功能落地。
 
 ### 任务
 
-1. `GET /api/ucloud/assignments`：拉全量作业，后端合并 `submit-view` 标注已提交状态
-2. `GET /api/ucloud/assignments/:id`
-3. `utils/deadline.js`：截止时间分级（借鉴 MYUCLOUD）+ where_to_study 的时间规范化
-4. `AssignmentList.vue` + `AssignmentCard.vue`：按紧急度排序，已提交的沉到底
-5. **跳转按钮**：拼 3.2 的最小深链
-6. **附件下载**：接口已就绪（见下），把 `src/api/files.js` 接到作业卡片的附件列表上
-
-### 附件下载的当前状态
-
-后端和前端模块都已建好并测过，缺的只是「有附件列表可挂」：
-
-| 部件 | 文件 | 状态 |
-|---|---|---|
-| `/file` 代理 | `server/routes/proxy.js` | ✅ 已建，含 Range / 防穿越 / 流式测试 |
-| 下载地址解析 | `server/services/resources.js` | ✅ 已建，`preview-url` → `/file` 路径 |
-| 下载接口 | `server/routes/api.js` | ✅ 已建，`POST /api/ucloud/resource/download` |
-| 前端下载 | `src/api/files.js` | ✅ 已建，`downloadResource(resourceId, filename)` |
-| 挂到作业卡片 | `AssignmentCard.vue` | ⬜ 等本期作业列表落地 |
-
-第 3 期要做的事只剩最后一行：在作业详情/卡片的附件列表上渲染下载按钮，调 `downloadResource()`。
-
-### 浏览器验证（已就位）
-
-`tests/browser/browser.test.js`，跑 `npm run test:browser`。验的是接口测试做不到的事：
-
-| 验什么 | 怎么验 |
-|---|---|
-| Vue 应用真的挂载 | 读 `h1` 文本 + 等 `.status-ok` 出现 |
-| 下载落盘 + 文件名 | Playwright 捕获 `download` 事件，断言 `suggestedFilename()` 是附件名，并读回落盘内容 |
-| 下载失败可读 | 走 `/api` 代理打后端 404，断言错误文案 |
-| CORS 放行 | 从已放行来源的页面里 `fetch` 后端 |
-| CORS 拦截 | 从未放行来源的页面里 `fetch`，断言被浏览器拦 |
-| 401 形状 | 无会话调下载接口，断言 `success/stage/msg` |
-
-两个关键断言都做过**反证**：把 `anchor.download` 删掉，文件名测试失败；把 CORS 头全去掉，
-放行测试失败。还原后 14/14 通过，文件字节一致。
-
-载体页 `tests/browser/fixtures/download-harness.html` import 的是 `src/api/files.js` 里
-真实的 `downloadFile`，不是复制品。
+1. ✅ `POST /api/ucloud/assignments`：全量作业列表。**不逐条合并 submit-view**——
+   列表自带 `assignmentStatus`/`submitTime`（见 api-reference §2.3 勘误），
+   足以判定提交状态；submit-view 留给将来显示分数时再接
+2. ✅ `POST /api/ucloud/assignment/detail`：附件元数据（卡片展开懒加载）
+3. ✅ `utils/deadline.js`：分级（借鉴 MYUCLOUD）+ where_to_study 时间规范化
+   （无时区按 Asia/Shanghai；「截止是时刻不是时长」；往期未交不催促）
+4. ✅ `AssignmentView.vue`：按课程分组 + 紧急度排序，已提交沉底
+5. ✅ **跳转按钮**：`buildAssignmentUrl()` 拼 §3.2 最小深链（参数集中一处）
+6. ✅ **附件下载**：接既有 `downloadResource()`，文件名为附件名
 
 ### 完成判据
 
-- [ ] 作业列表完整，课程名、标题、截止时间、状态正确
-- [ ] 排序：已逾期 → 今天/明天截止 → 一周内 → 待完成 → 已提交
-- [ ] **点「去交作业」打开的是该作业的提交页**，课程、标题、截止时间都对得上
+- [x] 作业列表完整，课程名、标题、截止时间、状态正确（浏览器断言）
+- [x] 排序：已逾期 → 今天/明天截止 → 一周内 → 待完成 → 已提交（单测断言全档顺序）
+- [x] 「去交作业」的 href 是 §3.2 详情页深链（浏览器断言含 assignmentId、
+      不含 refresh_token、不是列表页路由）
+- [x] 已提交的作业正确标注，不计入未完成计数（浏览器断言）
+- [x] 附件能下载到本地，文件名是附件名（既有浏览器下载用例保持绿）
 - [ ] 无痕窗口（无云邮会话）点跳转，落到 CAS 登录页，登完后仍在正确的作业页
-- [ ] 已提交的作业正确标注，不再计入紧急度
-- [ ] 作业附件能下载到本地，文件名是作业里显示的附件名（不是 S3 的 storageId.ext）
-      ——浏览器侧已用 Playwright 验过（见下），接上作业列表后只需复跑 `npm run test:browser`
+      —— 需要真实环境人工点验（roadmap 关键验收点，不删）
+- [ ] 人工逐个作业点验跳转打开的是**那一门作业**的提交页 —— 同上
 
 ### 关键验收点
 
 第 3 条和第 4 条是本项目存在的理由，**必须人工逐个作业点验**，不能只看代码。
-
-特别确认：跳转打开的不是作业**列表**页。3.3 已说明列表页依赖 `site-id` cookie，冷启动会空。如果发现跳到了列表页，说明深链拼错了。
+代码侧已断言深链形状正确（含作业 ID、非列表页、不带凭证）；打开后的页面
+内容核验依赖真实云邮会话，见交付报告遗留项。
 
 ---
 

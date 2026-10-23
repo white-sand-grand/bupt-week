@@ -39,11 +39,12 @@ BUPT 学生用的个人工具，只做三件事：查课表、看作业、给交
 
 ## 交作业跳转链接
 
-核心功能，参数集中在 `buildAssignmentUrl()` 一处（第 3 期落地）。改动前必须：
+核心功能，已落地（第 3 期），参数集中在 `buildAssignmentUrl()` 一处（`src/utils/assignment-url.js`）。改动前必须：
 1. 重新拉云邮前端 bundle 确认路由没变（bundle 哈希记在 `docs/api-reference.md` 3.1 节）
 2. 人工点验跳转打开的是**那一门作业的提交页**，不是列表页也不是首页
 
 列表页不能深链——它从 `site-id` cookie 读课程，冷启动会空。只能跳详情页。
+深链不带 refresh_token（`docs/api-reference.md` 3.4 的安全权衡）。
 
 ## 代码约定
 
@@ -55,8 +56,8 @@ BUPT 学生用的个人工具，只做三件事：查课表、看作业、给交
 ## 验证
 
 ```sh
-npm test            # 147 个接口/单元测试，不需要浏览器（Windows 上也可跑）
-npm run test:browser # 25 个浏览器测试，需要 chromium
+npm test            # 181 个接口/单元测试，不需要浏览器（Windows 上也可跑）
+npm run test:browser # 31 个浏览器测试，需要 chromium
 npm run build       # 前端构建，产物相对路径（Pages 子路径部署）
 ```
 

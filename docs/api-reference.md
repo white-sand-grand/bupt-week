@@ -205,11 +205,17 @@ Content-Type: application/json
 |---|---|
 | `id` | 作业 ID，**做深链就用它** |
 | `assignmentTitle` | 标题 |
-| `assignmentBeginTime` / `assignmentEndTime` | 起止时间 |
+| `assignmentBeginTime` / `assignmentEndTime` | 起止时间（**无时区的北京时间墙上钟**，按 Asia/Shanghai 解释） |
 | `siteId` / `siteName` | 所属课程 |
 | `chapterName` | 章节 |
-| `status` | 状态码（2 = 未提交，3 = 已提交，实测） |
-| `submitTime` | 提交时间 |
+| `status` | **作业自身状态**：2 = 进行中、3 = 已截止（与是否提交无关） |
+| `assignmentStatus` | **本人提交状态**：99 = 未提交、0 = 已提交、1 = 已批改 |
+| `submitTime` | 提交时间（有值即已提交） |
+
+> 2026-10-24 勘误：本节早期版本写「status 2=未提交、3=已提交」。MYUCLOUD
+> 用真实账号核对过两个字段的含义（见其 `deadline.js` 顶注）：判断提交要用
+> `assignmentStatus`/`submitTime`，`status` 只反映作业进行/截止。本项目
+> `src/utils/deadline.js` 按勘误后的语义实现。
 
 ### 2.4 作业详情
 
@@ -534,20 +540,24 @@ Referer: https://jwgl.bupt.edu.cn/jsxsd/framework/xsMain_bjyddx.jsp
 
 设计原则：**薄**。后端只做「登录 + 取数 + 解析 + 代理」，不做业务判断。截止时间分级、排序、分组都在前端。
 
+2026-10-24 起全部业务接口已实现。**sessionId 一律走请求体**（不进 query——query 会进访问日志和 Referer），与下面的早期草稿不同：
+
 ```
-POST /api/ucloud/login          { username, password } → { sessionId, username, realName, expiresAt }
-POST /api/ucloud/session        { sessionId }           → 校验并续期
-POST /api/ucloud/logout         { sessionId }
-GET  /api/ucloud/courses        ?sessionId=              → 课程列表
-GET  /api/ucloud/assignments    ?sessionId=              → 全量作业（含 submit-view 合并）
-GET  /api/ucloud/assignments/:id?sessionId=              → 单个作业详情
+POST /api/auth/login           { username, password }  → 一次登两系统（含限速）
+POST /api/ucloud/session       { sessionId }           → 校验并静默续期
+POST /api/ucloud/logout        { sessionId }
+POST /api/ucloud/assignments   { sessionId }           → 全量作业 records 透传
+POST /api/ucloud/assignment/detail { sessionId, assignmentId } → 附件元数据
+POST /api/ucloud/resource/download { sessionId, resourceId }   → /file 下载路径
 
-POST /api/jwgl/login            { username, password } → { sessionId, username, expiresAt }
-POST /api/jwgl/session          { sessionId }
-POST /api/jwgl/logout           { sessionId }
-GET  /api/jwgl/timetable        ?sessionId=&week=        → 解析后的周课表
+POST /api/jwgl/session         { sessionId }
+POST /api/jwgl/logout          { sessionId }
+POST /api/jwgl/timetable       { sessionId, week?, mode? } → 解析后的周课表
+                                                     （不带 week 时为当前周 + 全部周次）
 
-GET  /file/*                    → 代理 fileucloud.bupt.edu.cn（S3 防盗链处理）
+GET  /api/health
+GET  /api/auth/wecom/start | /api/auth/wecom/callback   → 企微识别（state 一次性绑定）
+GET  /file/*                    → 代理 fileucloud.bupt.edu.cn（来源准入 + 防盗链处理）
 ```
 
 `/file/*` 代理的三条规矩（MYUCLOUD `server/routes/proxy.js` 实测）：
