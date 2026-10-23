@@ -4,7 +4,7 @@ import { auth } from '../composables/auth.js'
 import { assignmentsStore } from '../composables/assignments.js'
 import { downloadResource } from '../api/files.js'
 import { buildAssignmentUrl } from '../utils/assignment-url.js'
-import { formatUpdatedAt } from '../utils/format.js'
+import { formatUpdatedAt, beijingDateString } from '../utils/format.js'
 import { friendlyError } from '../utils/errors.js'
 
 const props = defineProps({
@@ -50,10 +50,8 @@ function deadlineLabel(assignment) {
   if (!/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}/.test(raw || '')) return ''
   const date = raw.slice(0, 10)
   const time = raw.slice(11, 16)
-  const beijing = (offsetDays) =>
-    new Date(Date.now() + offsetDays * 86_400_000).toLocaleDateString('sv-SE', { timeZone: 'Asia/Shanghai' })
-  if (date === beijing(0)) return `今天 ${time} 截止`
-  if (date === beijing(1)) return `明天 ${time} 截止`
+  if (date === beijingDateString(0)) return `今天 ${time} 截止`
+  if (date === beijingDateString(1)) return `明天 ${time} 截止`
   return `${date.slice(5).replace('-', '/')} ${time} 截止`
 }
 

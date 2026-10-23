@@ -43,7 +43,7 @@ function readSetCookies(headers) {
   return raw ? [raw.split(';')[0]] : []
 }
 
-export function joinCookies(headers) {
+function joinCookies(headers) {
   return readSetCookies(headers)
     .map((cookie) => cookie.split(';')[0].trim())
     .filter(Boolean)

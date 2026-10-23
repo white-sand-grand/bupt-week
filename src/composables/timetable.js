@@ -74,8 +74,9 @@ function sync() {
 }
 
 /** 强制重新同步：拉当前周（拿最新的周次列表和节次模式）+ 补齐缺失周次。
- *  已缓存的周跳过，重试不会把整个学期重拉一遍。 */
+ *  已缓存的周跳过，重试不会把整个学期重拉一遍；在途时早退防连点叠加。 */
 async function runSync() {
+  if (syncState.value === 'syncing') return
   const mine = ++revision
   syncState.value = 'syncing'
   error.value = ''

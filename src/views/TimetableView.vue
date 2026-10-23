@@ -3,7 +3,7 @@ import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { auth } from '../composables/auth.js'
 import { timetable } from '../composables/timetable.js'
 import { currentTimetableWeek, groupTimetableCourses } from '../utils/timetable-cache.js'
-import { formatUpdatedAt } from '../utils/format.js'
+import { formatUpdatedAt, beijingDateString } from '../utils/format.js'
 
 const props = defineProps({
   /** 教务处登录态是否就绪。 */
@@ -56,12 +56,11 @@ const syncBanner = computed(() => {
 /** 「更新于 X」：让用户知道手里的数据是多久前的（可看懂原则）。 */
 const savedAtText = computed(() => formatUpdatedAt(timetable.savedAt.value))
 
+/** 课表日期是教务给的北京时间墙上钟，今天也按北京日期比
+ *  （设备在海外时区时，本地日期会和北京差一天）。 */
 function isToday(dayIndex) {
   const day = timetable.activeWeek.value?.days?.[dayIndex]
-  if (!day?.date) return false
-  const today = new Date()
-  const pad = (n) => String(n).padStart(2, '0')
-  return day.date === `${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}`
+  return day?.date === beijingDateString(0)
 }
 
 const weekIndex = computed(() => weeks.value.findIndex((week) => week.week === currentWeek.value))

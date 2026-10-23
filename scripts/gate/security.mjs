@@ -72,8 +72,15 @@ function isTextFile(path) {
 }
 
 function secretsGate() {
-  console.log('\n[2/3] 密钥与凭证扫描（git 跟踪文件）')
-  const tracked = execFileSync(process.platform === 'win32' ? 'git.exe' : 'git', ['ls-files'], { encoding: 'utf8' })
+  console.log('\n[2/3] 密钥与凭证扫描（git 跟踪 + 未忽略的新文件）')
+  // 除已跟踪文件外，还要扫「未跟踪但未被 gitignore」的新文件：
+  // 本地提交前跑门禁时，新写的文件还没 git add，只扫 ls-files 会漏（对抗验证抓过）
+  const gitBin = process.platform === 'win32' ? 'git.exe' : 'git'
+  const listed = [
+    execFileSync(gitBin, ['ls-files'], { encoding: 'utf8' }),
+    execFileSync(gitBin, ['ls-files', '--others', '--exclude-standard'], { encoding: 'utf8' }),
+  ].join('\n')
+  const tracked = listed
     .split('\n')
     .map((line) => line.trim())
     .filter(Boolean)

@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { api } from './api/client.js'
 import { auth } from './composables/auth.js'
 import { wecomStartUrl } from './api/auth.js'
+import { isInWechatBrowser } from './utils/platform.js'
 import LoginPanel from './components/LoginPanel.vue'
 import TimetableView from './views/TimetableView.vue'
 import AssignmentView from './views/AssignmentView.vue'
@@ -15,8 +16,8 @@ const view = ref('timetable')
 // 让用户能用学号密码兜底，而不是一遍遍被弹走。
 const AUTO_WECOM_KEY = 'bupt-week-auto-wecom-tried'
 
-// 在微信内置浏览器里打开时，UA 带 MicroMessenger（企业微信的 webview 也带）。
-const inWechat = computed(() => /MicroMessenger/i.test(navigator.userAgent))
+// 在微信内置浏览器里打开时（企业微信 webview 也算），未登录就自动识别身份。
+const inWechat = computed(isInWechatBrowser)
 
 onMounted(async () => {
   try {

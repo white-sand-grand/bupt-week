@@ -125,8 +125,8 @@ Windows 上 `npm test` / `npm run dev` / `npm run server` 可直接使用。
 
 ```sh
 npm run gate        # 全量门禁（单元 → 安全审计/密钥扫描 → 构建 → 浏览器 → 性能预算）
-npm test            # 199 个接口/单元测试，不需要浏览器
-npm run test:browser # 33 个浏览器测试，需要 chromium
+npm test            # 212 个接口/单元测试，不需要浏览器
+npm run test:browser # 34 个浏览器测试，需要 chromium
 npm run build       # 前端构建，产物在 dist/（相对路径，适配 Pages）
 npx wrangler dev    # 本地 Workers 运行时，与 Node 入口共用同一份 server/
 ```

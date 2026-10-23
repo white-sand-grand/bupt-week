@@ -5,9 +5,20 @@
  * 不能跟着用户设备时区漂移。
  */
 
-/** 无时区时间串（YYYY-MM-DD HH:mm[:ss]）按北京时间（+08:00）解释成时间戳。 */
+/** 无时区时间串（YYYY-MM-DD HH:mm[:ss]）按北京时间（+08:00）解释成时间戳。
+ *  日历上不存在的日期（如 2 月 30 日）引擎会宽容回退成 3 月 2 日——
+ *  那是「看似合理的错误天数」，显式拒收（对抗性测试抓过）。 */
 export function beijingTimestamp(value) {
   if (typeof value !== 'string') return NaN
+  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})[ T]/)
+  if (match) {
+    const year = Number(match[1])
+    const month = Number(match[2])
+    const day = Number(match[3])
+    if (month < 1 || month > 12 || day < 1 || day > 31) return NaN
+    const probe = new Date(Date.UTC(year, month - 1, day))
+    if (probe.getUTCMonth() !== month - 1 || probe.getUTCDate() !== day) return NaN
+  }
   const zoned = /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(?::\d{2})?$/.test(value)
     ? value.replace(' ', 'T') + '+08:00'
     : value
@@ -21,7 +32,7 @@ export function getDaysLeft(deadline, now = Date.now()) {
   return Math.floor((endTime - now) / 86400000)
 }
 
-export function getDeadlineLevel(daysLeft, isCompleted) {
+function getDeadlineLevel(daysLeft, isCompleted) {
   if (isCompleted) return 'submitted'
   if (daysLeft === null) return 'normal'
   if (daysLeft < 0) return 'overdue'
@@ -30,7 +41,7 @@ export function getDeadlineLevel(daysLeft, isCompleted) {
   return 'normal'
 }
 
-export function getAssignmentStatus(daysLeft, isCompleted) {
+function getAssignmentStatus(daysLeft, isCompleted) {
   if (isCompleted) return '已提交'
   if (daysLeft === null) return '待完成'
   if (daysLeft < 0) return '已截止未交'
@@ -46,7 +57,9 @@ const NOT_SUBMITTED_STATUS = 99
 
 function hasValue(value) {
   if (value === null || value === undefined) return false
-  const text = String(value).trim()
+  // 只认字符串：数组/对象会被 String() 拼成真值，曾把 ['2026-01-01'] 误判成已提交
+  if (typeof value !== 'string') return false
+  const text = value.trim()
   return text !== '' && text !== 'null' && text !== 'undefined' && text !== '-'
 }
 
@@ -58,33 +71,38 @@ function submissionFromAssignmentStatus(value) {
 }
 
 export function isRecordCompleted(record) {
-  if (hasValue(record.submitTime)) return true
-  return Boolean(submissionFromAssignmentStatus(record.assignmentStatus))
+  if (hasValue(record?.submitTime)) return true
+  return Boolean(submissionFromAssignmentStatus(record?.assignmentStatus))
 }
 
 // 学校的作业列表跨学期、又不总带课程信息。没归到本学期课程、且截止已久
 // 的未交作业算「往期未交」，不再混进「已逾期」里催促。
-export const CURRENT_TERM_GRACE_DAYS = 60
+const CURRENT_TERM_GRACE_DAYS = 60
 
-/** 上游 record → 展示模型。raw 不带出（附件等详情按需另取）。 */
+/** 展示模型的字符串字段只放行 string——上游塞对象/数组进来时宁可落空，不带着脏类型进视图。 */
+const text = (value, fallback = '') => (typeof value === 'string' ? value : fallback)
+
+/** 上游 record → 展示模型。raw 不带出（附件等详情按需另取）。
+ *  上游塞 null/非对象进来也不能炸——map 里一个炸全列表就没了（对抗性测试抓过）。 */
 export function normalizeAssignment(record, now = Date.now()) {
-  const isCompleted = isRecordCompleted(record)
-  const daysLeft = getDaysLeft(record.assignmentEndTime, now)
-  const courseId = record.siteId || ''
-  const courseName = record.siteName || '未知课程'
+  const safe = record && typeof record === 'object' ? record : {}
+  const isCompleted = isRecordCompleted(safe)
+  const daysLeft = getDaysLeft(safe.assignmentEndTime, now)
+  const courseId = text(safe.siteId)
+  const courseName = text(safe.siteName) || '未知课程'
   const isPastTerm = !courseId && daysLeft !== null && daysLeft < -CURRENT_TERM_GRACE_DAYS
   let level = getDeadlineLevel(daysLeft, isCompleted)
   if (level === 'overdue' && isPastTerm) level = 'missed'
 
   return {
-    id: String(record.id ?? ''),
-    title: record.assignmentTitle || '无标题',
-    chapter: record.chapterName || '',
+    id: String(safe.id ?? ''),
+    title: text(safe.assignmentTitle) || '无标题',
+    chapter: text(safe.chapterName),
     courseId,
     courseName,
-    beginTime: record.assignmentBeginTime || '',
-    deadline: record.assignmentEndTime || '',
-    submitTime: record.submitTime || '',
+    beginTime: text(safe.assignmentBeginTime),
+    deadline: text(safe.assignmentEndTime),
+    submitTime: text(safe.submitTime),
     daysLeft,
     level,
     isCompleted,

@@ -1,14 +1,14 @@
 <script setup>
 import { computed, ref } from 'vue'
 import { wecomStartUrl } from '../api/auth.js'
+import { isInWechatBrowser } from '../utils/platform.js'
 
 const props = defineProps({
   auth: { type: Object, required: true },
 })
 
 // 在微信内置浏览器里打开时，企业微信身份可以被自动识别，无需输学号密码。
-// MicroMessenger 是微信 webview 的 UA 标识；企业微信的 UA 也带它。
-const inWechat = computed(() => /MicroMessenger/i.test(navigator.userAgent))
+const inWechat = computed(isInWechatBrowser)
 
 const username = ref('')
 const password = ref('')
@@ -208,12 +208,6 @@ h2 {
   color: var(--error);
   background: var(--error-bg);
   border: 1px solid var(--error-line);
-}
-
-.notice.success {
-  color: var(--ok);
-  background: var(--ok-bg);
-  border: 1px solid var(--ok-line);
 }
 
 button,

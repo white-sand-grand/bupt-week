@@ -32,9 +32,11 @@ const assignments = computed(() => sortAssignments(raw.value.map((record) => nor
 const groups = computed(() => groupByCourse(assignments.value))
 const unfinishedCount = computed(() => assignments.value.filter((item) => !item.isCompleted && item.level !== 'missed').length)
 
-/** 强制走网络刷新（重试按钮也走这里，所以不看 state 直接拉）。 */
+/** 强制走网络刷新（重试按钮也走这里，所以不看 state 直接拉）。
+ *  在途时直接返回：连点重试不允许叠加请求（revision 只保数据正确，防重复靠这里）。 */
 async function refresh() {
   if (!auth.ucloudReady.value) return
+  if (state.value === 'loading') return
   const mine = ++revision
   state.value = 'loading'
   error.value = ''

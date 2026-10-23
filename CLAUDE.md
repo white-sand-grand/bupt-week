@@ -57,8 +57,8 @@ BUPT 学生用的个人工具，只做三件事：查课表、看作业、给交
 
 ```sh
 npm run gate        # 全量门禁：单元 → 安全 → 构建 → 浏览器 → 性能，快失败
-npm test            # 199 个接口/单元测试，不需要浏览器（Windows 上也可跑）
-npm run test:browser # 33 个浏览器测试，需要 chromium
+npm test            # 212 个接口/单元测试，不需要浏览器（Windows 上也可跑）
+npm run test:browser # 34 个浏览器测试，需要 chromium
 npm run build       # 前端构建，产物相对路径（Pages 子路径部署）
 ```
 

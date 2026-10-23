@@ -1159,6 +1159,54 @@ test('课表：partial 后可补齐缺失周次，不必刷新整页', async () 
   }
 })
 
+test('对抗：快速连点重试不会叠加请求（loading 早退 + revision 守卫）', async () => {
+  const page = await browser.newPage()
+  try {
+    const mode = { fail: true, slow: false }
+    let assignmentRequests = 0
+    let heldRoute = null
+    await page.route('**/api/auth/login', (route) => fulfill(route, LOGIN_OK))
+    await page.route('**/api/jwgl/session', (route) => fulfill(route, { success: true, data: { sessionId: 'jw-sid', username: '2021001234', expiresAt: EXPIRES_AT } }))
+    await page.route('**/api/ucloud/session', (route) => fulfill(route, UCLOUD_SESSION))
+    await page.route('**/api/jwgl/timetable', mockTimetable)
+    await page.route('**/api/ucloud/assignments', (route) => {
+      assignmentRequests += 1
+      if (mode.slow) {
+        // 挂起响应：制造 loading 窗口，让连点落在请求在途时
+        heldRoute = route
+        return undefined
+      }
+      if (mode.fail) return fulfill(route, { success: false, msg: '云邮系统暂时无法访问' }, 502)
+      return fulfill(route, ASSIGNMENTS_FIXTURE())
+    })
+
+    await page.goto(APP_ORIGIN, { waitUntil: 'networkidle' })
+    await page.fill(`${panel} input[type="text"]`, '2021001234')
+    await page.fill(`${panel} input[type="password"]`, 'pw')
+    await page.click(`${panel} button[type="submit"]`)
+    await page.waitForFunction(() => document.querySelectorAll('.panel').length === 0)
+    await page.click('.tabs button:nth-child(2)')
+    await page.waitForSelector('.notice-error')
+
+    // 慢响应窗口内对同一按钮同步三连击（在 Vue 渲染移除按钮前全部进事件队列）
+    mode.slow = true
+    assignmentRequests = 0
+    await page.$eval('.notice-error .notice-action', (el) => {
+      el.click()
+      el.click()
+      el.click()
+    })
+    await page.waitForTimeout(300)
+    assert.equal(assignmentRequests, 1, `连点重试只该发 1 个请求，实际 ${assignmentRequests}`)
+
+    // 放行挂起的响应，链路照常收尾
+    await fulfill(heldRoute, ASSIGNMENTS_FIXTURE())
+    await page.waitForSelector('.card')
+  } finally {
+    await page.close()
+  }
+})
+
 // ── 部署形态：Pages + 独立后端 ───────────────────────────────────────────────
 
 /**
