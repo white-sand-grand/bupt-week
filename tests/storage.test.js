@@ -64,7 +64,10 @@ test('FileSessionStore：跨实例恢复，且文件权限为 0600', async () =>
     await first.set('a', makeSession())
 
     // 权限位只取低 9 位；umask 可能影响 writeFileSync 的 mode，这里断言实际值。
-    assert.equal(statSync(file).mode & 0o777, 0o600)
+    // Windows/NTFS 不套用 POSIX 权限位（永远读到 0666），这条只在 POSIX 上有意义。
+    if (process.platform !== 'win32') {
+      assert.equal(statSync(file).mode & 0o777, 0o600)
+    }
 
     const second = new FileSessionStore(file)
     assert.equal((await second.get('a')).cookies, 'JSESSIONID=abc')

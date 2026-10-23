@@ -116,7 +116,7 @@ npm run dev             # → http://127.0.0.1:5173
 | 企业微信 / 微信内自动识别 | ✅ 骨架 + 实测跳转，回流后两步待你在微信里验 |
 | token 静默续期（`access_token` 约 2 小时） | ✅ |
 
-124 个接口测试 + 14 个浏览器测试全绿，Node 与 Workers 两条入口都验证过。
+147 个接口测试 + 25 个浏览器测试全绿，Node 与 Workers 两条入口都验证过。
 浏览器侧验过的包括：Vue 应用真的挂载、下载落盘且文件名是附件名、CORS 放行与拦截、
 登录态在刷新后保持、localStorage 里只有 sessionId。
 
@@ -134,7 +134,7 @@ npm run dev             # → http://127.0.0.1:5173
 附件下载的链路与为什么必须经服务端，见 [`docs/api-reference.md`](docs/api-reference.md) 2.6–2.8 节。
 
 ```sh
-npm test            # 124 个接口/单元测试，不需要浏览器
+npm test            # 147 个接口/单元测试，不需要浏览器
 npm run test:browser # 14 个浏览器测试，需要 chromium
 npm run build       # 前端构建，产物在 dist/（相对路径，适配 Pages）
 npx wrangler dev    # 本地 Workers 运行时，与 Node 入口共用同一份 server/

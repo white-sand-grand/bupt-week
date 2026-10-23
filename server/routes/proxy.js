@@ -9,6 +9,38 @@ const SOURCE_ORIGIN = 'https://ucloud.bupt.edu.cn'
 // 同时靠 Origin / Referer 校验防盗链。两边必须同时满足，只有服务端做得到。
 const STRIPPED_REQUEST_HEADERS = ['authorization', 'blade-auth', 'tenant-id', 'cookie']
 
+/**
+ * 来源准入：请求只要带了 Origin 或 Referer，就必须命中白名单之一。
+ *
+ * 浏览器跨站引用一定带其一，这条挡的是把本代理当免费外链/带宽中继挂到
+ * 别的站点上；非浏览器的直连滥用它挡不住，那一层靠 Cloudflare 的限速规则。
+ * 后端跑在回环地址上（本机开发形态）时直接放行——生产 Worker 的域名
+ * 永远不是回环，这条不影响线上防护。
+ */
+function isAdmitted(request, allowedOrigins, ownOrigin) {
+  try {
+    if (new URL(ownOrigin).hostname === '127.0.0.1' || new URL(ownOrigin).hostname === 'localhost'
+      || new URL(ownOrigin).hostname === '[::1]' || new URL(ownOrigin).hostname === '::1') {
+      return true
+    }
+  } catch {
+    // ownOrigin 解析不了就按正常流程判断
+  }
+
+  const origin = request.headers.get('Origin')
+  if (origin) return allowedOrigins.includes(origin)
+
+  const referer = request.headers.get('Referer')
+  if (referer) {
+    try {
+      return allowedOrigins.includes(new URL(referer).origin)
+    } catch {
+      return false
+    }
+  }
+  return true
+}
+
 // 重建 Response 时要一并丢掉的长度/编码类头部：undici 已按 content-encoding
 // 解压过 body，保留原始的 content-length 会让浏览器按压缩尺寸截断。
 const DROP_ON_REBUILD = ['content-encoding', 'content-length', 'transfer-encoding']
@@ -53,7 +85,12 @@ export function normalizeProxyResponse(response, extraHeaders = {}) {
  */
 export function mountProxyRoutes(app, { allowedOrigins = [] } = {}) {
   const handler = async (c) => {
-    const incoming = new URL(c.req.url)
+    const own = new URL(c.req.url)
+    if (!isAdmitted(c.req.raw, allowedOrigins, `${own.protocol}//${own.host}`)) {
+      throw new ApiError(403, '来源不在白名单内，拒绝代理该请求')
+    }
+
+    const incoming = own
     const target = new URL(FILE_ORIGIN)
     target.pathname = incoming.pathname.replace(/^\/file/, '') || '/'
     target.search = incoming.search

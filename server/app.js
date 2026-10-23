@@ -30,7 +30,7 @@ export function createBackend({ getSessionStore = null, allowedOrigins = [], fro
   // 业务接口与会话都依赖存储，没注入就不挂——而不是挂上去每次都 401。
   if (getSessionStore) {
     app.route('/api', createApiRoutes({ getSessionStore }))
-    app.route('/api', createAuthRoutes({ getSessionStore, frontendUrl }))
+    app.route('/api', createAuthRoutes({ getSessionStore, frontendUrl, allowedOrigins }))
   }
 
   mountProxyRoutes(app, { allowedOrigins })

@@ -63,11 +63,41 @@ test('/file 代理：剥掉上游 CORS 头，补上本后端自己的', async (t
 test('/file 代理：来源不在白名单时不放行，但仍能透传文件', async (t) => {
   mockUpstream(t, async () => new Response('ok'))
 
+  // app.request 默认落在 localhost——回环形态直接放行（本机开发），
+  // 所以这条实际验证的是 CORS 头不发给未放行来源。
   const response = await app.request('/file/x.pdf', { headers: { Origin: 'https://evil.example.com' } })
 
   assert.equal(response.status, 200)
   assert.equal(response.headers.get('access-control-allow-origin'), null)
   assert.equal(await response.text(), 'ok')
+})
+
+test('/file 代理：非回环域名下，来源不在白名单时拒绝代理（403）', async (t) => {
+  const requested = []
+  mockUpstream(t, async (request) => {
+    requested.push(request.url)
+    return new Response('ok')
+  })
+
+  // 用完整 URL 模拟线上 Worker 域名，绕开回环放行
+  const base = 'https://bupt-week.example-workers.dev'
+
+  const evilOrigin = await app.request(`${base}/file/x.pdf`, { headers: { Origin: 'https://evil.example.com' } })
+  assert.equal(evilOrigin.status, 403)
+  assert.match(await evilOrigin.json().then((b) => b.msg), /白名单/)
+
+  const evilReferer = await app.request(`${base}/file/x.pdf`, {
+    headers: { Referer: 'https://evil.example.com/page' },
+  })
+  assert.equal(evilReferer.status, 403)
+
+  // 白名单内的 Origin 放行；两个头都没有（非浏览器客户端）也放行
+  const allowed = await app.request(`${base}/file/x.pdf`, { headers: { Origin: ALLOWED_ORIGIN } })
+  assert.equal(allowed.status, 200)
+  const bare = await app.request(`${base}/file/x.pdf`)
+  assert.equal(bare.status, 200)
+
+  assert.equal(requested.length, 2, '只有被放行的请求才应到达上游')
 })
 
 test('/file 代理：直接返回流，不等完整文件下载', async (t) => {

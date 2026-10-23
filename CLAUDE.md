@@ -31,7 +31,7 @@ BUPT 学生用的个人工具，只做三件事：查课表、看作业、给交
 - Hono 里 handler 返回**原始 `Response`** 时，中间件用 `c.header()` 设的头会被丢掉。需要自己补。
 - 教务处登录的 `encodeInp` 看着像自定义变体，**实测就是手写的标准 base64**（65 字符 key 只是让下标 64 映射到 `=`）。照抄 MYUCLOUD 不要重写——改一个字符就可能静默登录失败，极难查。
 - **CAS 对未注册的 service 直接返回 `Application Not Authorized to Use CAS`。** 拿它当探针可以判断某个域名接没接 CAS。也意味着不能把自己的后端设为 service 来接 ticket。
-- **企业微信登录靠的是换掉 `app.bupt.edu.cn` 的 `redirect` 参数**，state 必须原样保留（那才是 CAS 认的凭证）。见 `docs/unified-login-plan.md`。
+- **企业微信登录靠的是换掉 `app.bupt.edu.cn` 的 `redirect` 参数**，state 必须原样保留（那才是 CAS 认的凭证）。见 `docs/unified-login-plan.md`。start 会把 state 存进一次性 cookie，callback 必须对上；前端地址只认 CORS 白名单内的 Referer，别放开这两条。
 - Vite dev server 开了 SPA fallback：**不存在的文件会返回 `index.html` 且状态码 200**。想测 404 要走 `/api` 代理打到后端。
 - **Node 的 `fetch` 默认不读 `HTTP_PROXY`。** 本机若走了代理，后端连学校会直接 `ETIMEDOUT`。
   `npm run server` / `npm run dev` 已带上 `NODE_USE_ENV_PROXY=1`（无代理时是空动作，需 Node 24）。
@@ -55,14 +55,16 @@ BUPT 学生用的个人工具，只做三件事：查课表、看作业、给交
 ## 验证
 
 ```sh
-npm test            # 124 个接口/单元测试，不需要浏览器
-npm run test:browser # 14 个浏览器测试，需要 chromium
+npm test            # 147 个接口/单元测试，不需要浏览器（Windows 上也可跑）
+npm run test:browser # 25 个浏览器测试，需要 chromium
 npm run build       # 前端构建，产物相对路径（Pages 子路径部署）
 ```
 
 浏览器测试是单独一个脚本，不并进 `npm test`：它要先装 chromium，且慢一个量级。
 首次使用前执行 `npx playwright install chromium`——只装完整的 chromium 构建即可，
 `chrome-headless-shell` 下载失败不影响（测试用 `channel: 'chromium'` 指定完整构建）。
+chromium 下载不动时，可用系统浏览器顶替：
+`BROWSER_EXECUTABLE="C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe" npm run test:browser`。
 
 改完 `server/` 必须两个入口都验：`npm run server` 和 `npx wrangler dev`。
 改完前端必须 `npm run build` 通过——它是 SFC 编译的真门槛（dev server 有模块缓存，200 不代表编译成功）。

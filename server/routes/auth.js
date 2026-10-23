@@ -1,8 +1,9 @@
 import { Hono } from 'hono'
 import { ApiError, readJson } from '../http.js'
-import { CAS_CLIENTS, casAuthenticate, casClientRedirect } from '../services/cas.js'
+import { CAS_CLIENTS, casAuthenticate, casClientRedirect, mergeCookies } from '../services/cas.js'
 import { getUserInfo, loginUcloudWithTicket, refreshAccessToken } from '../services/ucloud.js'
 import { loginJwgl, loginJwglWithTicket, validateJwglSession } from '../services/jwgl.js'
+import { createLoginRateLimiter } from '../rate-limit.js'
 import { withUserAgent } from '../user-agent.js'
 
 // 服务端会话 7 天。上游会话可能提前失效，届时提示重新登录即可。
@@ -12,6 +13,9 @@ const UCLOUD_SERVICE = 'https://ucloud.bupt.edu.cn'
 
 // /wecom/start 时把前端地址存进这个 cookie，callback 时读出来
 const FRONTEND_COOKIE = 'bupt-week-frontend'
+// /wecom/start 时把 CAS 的 state 存进这个 cookie，callback 时必须对上。
+// 一次性绑定：证明这次回流确实由我们发起、且发生在同一个浏览器里。
+const WECOM_STATE_COOKIE = 'bupt-week-wecom-state'
 const JWGL_SERVICE = 'https://jwgl.bupt.edu.cn/'
 
 function newSessionId() {
@@ -86,26 +90,32 @@ async function loginBothSystems({ username, password, fetchImpl = fetch }) {
 }
 
 /**
- * 包一层 fetch，把上一次 CAS 认证拿到的 Cookie 固设进去。
+ * 包一层 fetch，把上一次 CAS 认证的 Cookie 并进请求。
  *
  * CAS 的 SSO 会话（CASTGC）就存在这些 Cookie 里。第二次请求带上它，
  * CAS 才会认"这人已经登过了"，直接签发新 ticket。
+ *
+ * 合并而不是覆盖：请求自带的 Cookie（新流程自己的 JSESSIONID，与 execution
+ * 配对）优先，上次认证留下的 SSO Cookie 补位。直接覆盖会让两个流程的
+ * JSESSIONID 错位，CAS 拒掉表单、静默回退到老登录。
  */
 function reuseCookies(fetchImpl, cookies) {
   if (!cookies) return fetchImpl
   return async (url, options = {}) => {
     const headers = new Headers(options.headers)
-    headers.set('Cookie', cookies)
+    const merged = mergeCookies(cookies, headers.get('Cookie') || '')
+    if (merged) headers.set('Cookie', merged)
     return fetchImpl(url, { ...options, headers })
   }
 }
 
-export function createAuthRoutes({ getSessionStore, frontendUrl = '' }) {
+export function createAuthRoutes({ getSessionStore, frontendUrl = '', allowedOrigins = [] }) {
   const routes = new Hono()
+  const limitLogin = createLoginRateLimiter()
 
   // ── 统一登录 ──────────────────────────────────────────────────────────────
 
-  routes.post('/auth/login', async (c) => {
+  routes.post('/auth/login', limitLogin(async (c) => {
     const { username, password } = await readJson(c.req.raw)
     const { ucloud, jwgl, jwglVia } = await loginBothSystems({ username, password })
 
@@ -135,11 +145,11 @@ export function createAuthRoutes({ getSessionStore, frontendUrl = '' }) {
         expiresAt: expiresAt(),
       },
     })
-  })
+  }))
 
   // ── 云邮（保留单系统入口，便于单独调试） ─────────────────────────────────
 
-  routes.post('/ucloud/login', async (c) => {
+  routes.post('/ucloud/login', limitLogin(async (c) => {
     const { username, password } = await readJson(c.req.raw)
     const { ticket } = await casAuthenticate({ username, password, service: UCLOUD_SERVICE })
     const result = await loginUcloudWithTicket(ticket, { username })
@@ -151,7 +161,7 @@ export function createAuthRoutes({ getSessionStore, frontendUrl = '' }) {
       success: true,
       data: { sessionId, username: result.username, realName: result.realName, expiresAt: expiresAt() },
     })
-  })
+  }))
 
   routes.post('/ucloud/session', async (c) => {
     const { sessionId } = await readJson(c.req.raw)
@@ -188,7 +198,7 @@ export function createAuthRoutes({ getSessionStore, frontendUrl = '' }) {
 
   // ── 教务处 ───────────────────────────────────────────────────────────────
 
-  routes.post('/jwgl/login', async (c) => {
+  routes.post('/jwgl/login', limitLogin(async (c) => {
     const { username, password } = await readJson(c.req.raw)
     const result = await loginJwgl({ username, password })
 
@@ -201,7 +211,7 @@ export function createAuthRoutes({ getSessionStore, frontendUrl = '' }) {
     })
 
     return c.json({ success: true, data: { sessionId, username: result.username, expiresAt: expiresAt() } })
-  })
+  }))
 
   routes.post('/jwgl/session', async (c) => {
     const { sessionId } = await readJson(c.req.raw)
@@ -256,20 +266,29 @@ export function createAuthRoutes({ getSessionStore, frontendUrl = '' }) {
     const target = new URL(redirectUrl)
     target.searchParams.set('redirect', `${backendOrigin(c.req.url)}/api/auth/wecom/callback`)
 
-    // 把前端地址记进 cookie。此刻用户是从我们页面点进来的，Referer 可信；
-    // 等 app.bupt 跳回 callback 时，Referer 已经变成 app.bupt 了，那时候再想
-    // 推断前端地址已经晚了。cookie 在本 worker 域名上，能撑过这一圈跳转。
     const response = c.redirect(target.toString())
-    const referer = c.req.header('Referer') || ''
-    if (referer) {
-      try {
-        const origin = new URL(referer).origin
-        response.headers.set(
+
+    // 一次性绑定：把 CAS 的 state 记进 HttpOnly cookie，callback 必须对上。
+    // state 是 CAS 签发的随机值（猜不出），cookie 只在我们的域名上——
+    // 这条链把「回流的 code/state」钉死在「我们发起的 start」和同一个浏览器上。
+    if (state) {
+      response.headers.append(
+        'Set-Cookie',
+        `${WECOM_STATE_COOKIE}=${encodeURIComponent(state)}; Path=/api/auth/wecom; HttpOnly; SameSite=Lax; Secure; Max-Age=900`,
+      )
+    }
+
+    // 前端地址只在 Referer 命中白名单时才记 cookie。Referer 任何页面都能伪造——
+    // 无条件信任等于允许把登录结果（URL 里带着 sessionId）302 到任意地址。
+    // 此刻用户从我们页面点进来，Referer 是可信的，但只信白名单里的那些。
+    // 配了 FRONTEND_URL 时它优先，这里不用记。
+    if (!frontendUrl) {
+      const refererOrigin = whitelistedRefererOrigin(c.req.header('Referer') || '', allowedOrigins)
+      if (refererOrigin) {
+        response.headers.append(
           'Set-Cookie',
-          `${FRONTEND_COOKIE}=${encodeURIComponent(origin)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=900`,
+          `${FRONTEND_COOKIE}=${encodeURIComponent(refererOrigin)}; Path=/; HttpOnly; SameSite=Lax; Secure; Max-Age=900`,
         )
-      } catch {
-        // Referer 不可解析就算了，callback 还有别的兜底
       }
     }
     return response
@@ -288,7 +307,16 @@ export function createAuthRoutes({ getSessionStore, frontendUrl = '' }) {
     const state = c.req.query('state') || ''
 
     if (!code || !state) {
-      return redirectToFrontend(c, frontendUrl, '#/login?error=wecom-cancelled')
+      return redirectToFrontend(c, frontendUrl, '#/login?error=wecom-cancelled', [expireStateCookie()])
+    }
+
+    // start 时种下的 state cookie 必须与回流参数一致，否则这次回流不是我们
+    // 发起的流程（或换了浏览器），拒绝——不校验的话任何人都能拿自己的
+    // code/state 打到我们 callback，把别人的 sessionId 塞进受害者浏览器。
+    const boundState = readCookie(c, WECOM_STATE_COOKIE)
+    if (!boundState || boundState !== state) {
+      console.warn('[auth] 企业微信回调 state 校验失败', { hasCookie: Boolean(boundState) })
+      return redirectToFrontend(c, frontendUrl, '#/login?error=wecom-state', [expireStateCookie()])
     }
 
     const loginUrl = `https://auth.bupt.edu.cn/authserver/login?client_name=${CAS_CLIENTS.wecom}`
@@ -298,7 +326,7 @@ export function createAuthRoutes({ getSessionStore, frontendUrl = '' }) {
     try {
       response = await fetch(loginUrl, withUserAgent({ redirect: 'manual' }))
     } catch {
-      return redirectToFrontend(c, frontendUrl, '#/login?error=wecom-connect')
+      return redirectToFrontend(c, frontendUrl, '#/login?error=wecom-connect', [expireStateCookie()])
     }
 
     const location = response.headers.get('location') || ''
@@ -314,7 +342,7 @@ export function createAuthRoutes({ getSessionStore, frontendUrl = '' }) {
     if (!ticket) {
       // 到这一步失败，最可能是 CAS 不认被改过的 redirect，或者 code 已过期
       console.warn('[auth] 企业微信回调没拿到 ticket', { status: response.status, hasLocation: Boolean(location) })
-      return redirectToFrontend(c, frontendUrl, '#/login?error=wecom-no-ticket')
+      return redirectToFrontend(c, frontendUrl, '#/login?error=wecom-no-ticket', [expireStateCookie()])
     }
 
     const ucloud = await loginUcloudWithTicket(ticket)
@@ -325,6 +353,7 @@ export function createAuthRoutes({ getSessionStore, frontendUrl = '' }) {
       c,
       frontendUrl,
       `#/login?wecom=ok&sessionId=${encodeURIComponent(sessionId)}`,
+      [expireStateCookie()],
     )
   })
 
@@ -335,6 +364,27 @@ export function createAuthRoutes({ getSessionStore, frontendUrl = '' }) {
 function backendOrigin(requestUrl) {
   const url = new URL(requestUrl)
   return `${url.protocol}//${url.host}`
+}
+
+/**
+ * 从 Referer 提取前端 origin；只在命中 CORS 白名单时返回，其余返回空串。
+ *
+ * Referer 是任何页面都能带的头，不能直接当可信输入——攻击者页面带上自己的
+ * Referer 打 start，就能让 callback 把 sessionId 302 到他的域名。
+ */
+function whitelistedRefererOrigin(referer, allowedOrigins) {
+  if (!referer) return ''
+  try {
+    const origin = new URL(referer).origin
+    return allowedOrigins.includes(origin) ? origin : ''
+  } catch {
+    return ''
+  }
+}
+
+/** 让 state cookie 立即过期。callback 无论成败都带上一条，一次性使用。 */
+function expireStateCookie() {
+  return `${WECOM_STATE_COOKIE}=; Path=/api/auth/wecom; Max-Age=0`
 }
 
 /**
@@ -375,19 +425,24 @@ function readCookie(context, name) {
 /**
  * 跳回前端。拿不到前端地址时返回一段明确的文字，而不是拼一个坏 URL 把用户
  * 送到 404 页面——那种失败看起来像站点挂了，实际只是没配地址。
+ *
+ * @param {string[]} setCookies 额外要下发的 Set-Cookie（如清掉 state cookie）
  */
-function redirectToFrontend(context, configured, hash) {
+function redirectToFrontend(context, configured, hash, setCookies = []) {
   const origin = frontendOrigin(context, configured)
-  if (!origin) {
-    return context.html(
-      '<!DOCTYPE html><meta charset="utf-8"><title>登录完成</title>'
-      + '<body style="font-family:system-ui;padding:2rem;line-height:1.7">'
-      + '<h2>企业微信登录已完成</h2>'
-      + '<p>但没能确定要跳回哪个页面。请手动打开站点首页，登录态已生效。</p>'
-      + '<p style="color:#888;font-size:.85rem">'
-      + '如果这是你自己部署的实例，在后端设置 FRONTEND_URL 环境变量即可自动跳回。'
-      + '</p></body>',
-    )
+  const response = origin
+    ? context.redirect(`${origin}${hash}`)
+    : context.html(
+        '<!DOCTYPE html><meta charset="utf-8"><title>登录完成</title>'
+        + '<body style="font-family:system-ui;padding:2rem;line-height:1.7">'
+        + '<h2>企业微信登录已完成</h2>'
+        + '<p>但没能确定要跳回哪个页面。请手动打开站点首页，登录态已生效。</p>'
+        + '<p style="color:#888;font-size:.85rem">'
+        + '如果这是你自己部署的实例，在后端设置 FRONTEND_URL 环境变量即可自动跳回。'
+        + '</p></body>',
+      )
+  for (const cookie of setCookies) {
+    response.headers.append('Set-Cookie', cookie)
   }
-  return context.redirect(`${origin}${hash}`)
+  return response
 }

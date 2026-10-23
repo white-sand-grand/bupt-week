@@ -27,6 +27,23 @@ onMounted(async () => {
     detail.value = error.message
   }
 
+  // 企业微信回流：后端把 sessionId 放在 URL fragment 里带回来（不进 Referer）。
+  // 落地后第一件事就是消费它并把 URL 清干净——留着等于把凭证放在地址栏
+  // 和历史记录里。无效（过期/伪造）就当没发生，走常规 restore。
+  //
+  // hash 形如 #/login?wecom=ok&sessionId=…：路由路径在前、参数在问号后，
+  // 直接拿整段喂 URLSearchParams 会把「/login?wecom」当成键名。
+  const hashQuery = new URLSearchParams(location.hash.split('?')[1] || '')
+  const wecomSessionId = hashQuery.get('wecom') === 'ok' ? hashQuery.get('sessionId') || '' : ''
+  if (wecomSessionId) {
+    history.replaceState(null, '', location.pathname + location.search)
+    try {
+      await auth.adoptWecomSession(wecomSessionId)
+    } catch {
+      // 会话无效，保持未登录，登录面板就在下面
+    }
+  }
+
   await auth.restore()
 
   // 微信里：未登录就自动发起企业微信识别，不用用户点。
@@ -38,8 +55,7 @@ onMounted(async () => {
   }
 
   // 企业微信回调失败：清掉标记。面板未登录时本就展开，用户可以直接用学号密码兜底。
-  const hash = new URLSearchParams(location.hash.slice(1))
-  if (hash.get('error')?.startsWith('wecom-')) {
+  if (hashQuery.get('error')?.startsWith('wecom-')) {
     sessionStorage.removeItem(AUTO_WECOM_KEY)
     history.replaceState(null, '', location.pathname + location.search)
   }

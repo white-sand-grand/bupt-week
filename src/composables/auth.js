@@ -1,4 +1,5 @@
 import { computed, ref } from 'vue'
+import { ApiError } from '../api/client.js'
 import {
   checkJwglSession,
   checkUcloudSession,
@@ -76,7 +77,28 @@ export const auth = {
     return data
   },
 
-  /** 校验并续期。失效的一侧会被清掉，不会留一个假登录。 */
+  /**
+   * 企业微信回流落地：后端把 sessionId 放在 URL fragment 里带回来（不进
+   * Referer），由 App.vue 在挂载时交给我们。企微流程只登云邮这一侧。
+   * 先向后端核一遍（顺带取学号姓名），无效就抛给调用方按未登录处理。
+   */
+  async adoptWecomSession(sessionId) {
+    const data = await checkUcloudSession(sessionId)
+    ucloud.value = {
+      sessionId: data.sessionId,
+      username: data.username || '',
+      realName: data.realName || '',
+      expiresAt: data.expiresAt,
+    }
+    write(UCLOUD_KEY, ucloud.value)
+  },
+
+  /**
+   * 校验并续期。失效的一侧会被清掉，不会留一个假登录。
+   *
+   * 只在后端明确判 401 时才清本地态：网络错误（后端不可达、断网）不是
+   * 会话失效，本地态保留，下次进页面再试——服务端会话其实还活着。
+   */
   async restore() {
     const results = await Promise.allSettled([
       ucloud.value ? checkUcloudSession(ucloud.value.sessionId) : Promise.resolve(null),
@@ -84,11 +106,12 @@ export const auth = {
     ])
 
     const [ucloudResult, jwglResult] = results
+    const invalid = (result) => result.reason instanceof ApiError && result.reason.status === 401
 
     if (ucloudResult.status === 'fulfilled' && ucloudResult.value) {
       ucloud.value = { ...ucloud.value, ...ucloudResult.value }
       write(UCLOUD_KEY, ucloud.value)
-    } else if (ucloudResult.status === 'rejected') {
+    } else if (ucloudResult.status === 'rejected' && invalid(ucloudResult)) {
       ucloud.value = null
       write(UCLOUD_KEY, null)
     }
@@ -96,7 +119,7 @@ export const auth = {
     if (jwglResult.status === 'fulfilled' && jwglResult.value) {
       jwgl.value = { ...jwgl.value, ...jwglResult.value }
       write(JWGL_KEY, jwgl.value)
-    } else if (jwglResult.status === 'rejected') {
+    } else if (jwglResult.status === 'rejected' && invalid(jwglResult)) {
       jwgl.value = null
       write(JWGL_KEY, null)
     }

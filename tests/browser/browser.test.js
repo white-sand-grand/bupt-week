@@ -60,8 +60,12 @@ const STORED_UCLOUD = {
   expiresAt: EXPIRES_AT,
 }
 
-// chrome-headless-shell 没装成（CDN 连接被重置），用完整的 chromium 构建顶上。
-const LAUNCH_OPTIONS = { channel: 'chromium' }
+// 默认用完整的 chromium 构建（channel: 'chromium'）。
+// CDN 下载受限的机器可以设 BROWSER_EXECUTABLE 指到系统浏览器顶替，
+// 例如 Edge：BROWSER_EXECUTABLE="C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
+const LAUNCH_OPTIONS = process.env.BROWSER_EXECUTABLE
+  ? { executablePath: process.env.BROWSER_EXECUTABLE }
+  : { channel: 'chromium' }
 
 // 微信内置浏览器的 UA。企业微信的 webview 也带 MicroMessenger。
 const WECHAT_UA =
@@ -434,6 +438,49 @@ test('会话已失效时刷新页面会被打回登录态', async () => {
   }
 })
 
+// ── 企业微信回流落地 ────────────────────────────────────────────────────────
+
+test('企微回流：hash 带回的 sessionId 落地成登录态，且 URL 被清干净', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.route('**/api/ucloud/session', (route) => fulfill(route, UCLOUD_SESSION))
+
+    // 后端 callback 成功后的落地形态：fragment 里有路由路径 + 参数
+    await page.goto(`${APP_ORIGIN}/#/login?wecom=ok&sessionId=uc-sid`, { waitUntil: 'networkidle' })
+
+    // 登录态建立：面板收起、顶栏出姓名、localStorage 落下标准形状
+    await page.waitForFunction(() => document.querySelectorAll('.panel').length === 0)
+    assert.match(await page.textContent('.topbar-auth'), /张三/)
+    assert.deepEqual(
+      await page.evaluate(() => JSON.parse(localStorage.getItem('bupt-week-ucloud-auth'))),
+      STORED_UCLOUD,
+    )
+
+    // sessionId 不能留在地址栏/历史里
+    assert.equal(page.url().includes('sessionId='), false, 'sessionId 不该留在地址栏')
+  } finally {
+    await page.close()
+  }
+})
+
+test('企微回流：sessionId 无效时保持未登录，URL 同样被清掉', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.route('**/api/ucloud/session', (route) =>
+      fulfill(route, { success: false, stage: 'ucloud-auth', msg: '云邮登录已过期，请重新登录' }, 401),
+    )
+
+    await page.goto(`${APP_ORIGIN}/#/login?wecom=ok&sessionId=uc-dead`, { waitUntil: 'networkidle' })
+    await page.waitForSelector(`${panel} .login-form`)
+
+    assert.match(await page.textContent('.topbar-auth'), /未登录/)
+    assert.equal(await page.evaluate(() => localStorage.getItem('bupt-week-ucloud-auth')), null)
+    assert.equal(page.url().includes('sessionId='), false)
+  } finally {
+    await page.close()
+  }
+})
+
 test('退出登录会调后端并清掉本地状态', async () => {
   const page = await browser.newPage()
   try {
@@ -663,11 +710,13 @@ async function serveDist() {
 }
 
 test('部署形态下企微登录指向后端域名，不是 Pages 自己的', async () => {
-  // 用哨兵后端地址构建，模拟线上 Pages + Workers 分离
+  // 用哨兵后端地址构建，模拟线上 Pages + Workers 分离。
+  // shell 只在 Windows 下需要（npm 是 npm.cmd）。
   execFileSync('npm', ['run', 'build'], {
     cwd: process.cwd(),
     env: { ...process.env, VITE_BACKEND_URL: SENTINEL },
     stdio: 'pipe',
+    shell: process.platform === 'win32',
   })
   await serveDist()
 

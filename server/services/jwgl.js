@@ -1,4 +1,5 @@
 import { ApiError } from '../http.js'
+import { mergeCookies } from './cas.js'
 
 const JWGL_BASE = 'https://jwgl.bupt.edu.cn'
 
@@ -71,18 +72,6 @@ function parseSetCookies(response) {
   const raw = response.headers.get('set-cookie') || ''
   if (!raw) return ''
   return raw.split(',').map((item) => item.trim().split(';')[0]).filter(Boolean).join('; ')
-}
-
-/** 按名字覆盖式合并：后到的同名 Cookie 替换先前的，不重复堆积。 */
-function mergeCookies(current = '', updates = '') {
-  if (!updates) return current
-  const names = new Set(updates.split('; ').map((cookie) => cookie.split('=')[0]))
-  return [
-    ...current.split('; ').filter((cookie) => cookie && !names.has(cookie.split('=')[0])),
-    updates,
-  ]
-    .filter(Boolean)
-    .join('; ')
 }
 
 function buildHeaders(cookies, extra = {}) {

@@ -9,7 +9,13 @@ const DIST = resolve(ROOT, 'dist')
 
 test.before(() => {
   rmSync(DIST, { recursive: true, force: true })
-  execFileSync('npm', ['run', 'build'], { cwd: ROOT, stdio: 'pipe' })
+  // shell 只在 Windows 下需要（npm 是 npm.cmd，execFileSync 不做 PATHEXT 解析）；
+  // Unix 上多一层 shell 反而引号处理变脆。
+  execFileSync('npm', ['run', 'build'], {
+    cwd: ROOT,
+    stdio: 'pipe',
+    shell: process.platform === 'win32',
+  })
 })
 
 test.after(() => {

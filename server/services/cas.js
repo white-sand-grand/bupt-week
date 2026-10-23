@@ -50,6 +50,28 @@ export function joinCookies(headers) {
     .join('; ')
 }
 
+/** 按名字覆盖式合并：后到的同名 Cookie 替换先前的，不重复堆积。 */
+export function mergeCookies(current = '', updates = '') {
+  if (!updates) return current
+  const names = new Set(updates.split('; ').map((cookie) => cookie.split('=')[0]))
+  return [
+    ...current.split('; ').filter((cookie) => cookie && !names.has(cookie.split('=')[0])),
+    updates,
+  ]
+    .filter(Boolean)
+    .join('; ')
+}
+
+/** 从 302 的 Location 里取 CAS ticket，取不到返回空串。 */
+function ticketFromLocation(location) {
+  if (!location) return ''
+  try {
+    return new URL(location).searchParams.get('ticket') || ''
+  } catch {
+    return ''
+  }
+}
+
 function pickInputValue(html, name) {
   const input = html.match(new RegExp(`<input[^>]*name=["'\\s]*${name}["']?[^>]*>`, 'i'))?.[0] || ''
   return input.match(/value="([^"]*)"/i)?.[1] || ''
@@ -104,6 +126,16 @@ export async function casAuthenticate({ username = '', password = '', service, f
 
   log('cas:get', { service, status: loginPage.status, hasExecution: Boolean(execution) })
 
+  // 已有 SSO 会话（请求带了 CASTGC）时 CAS 不出登录页，直接 302 发 ticket。
+  // 这是统一登录里第二次认证的形态：不用重交学号密码。
+  if (loginPage.status >= 300 && loginPage.status < 400) {
+    const ssoTicket = ticketFromLocation(loginPage.headers.get('location'))
+    if (ssoTicket) {
+      log('cas:sso', { service, status: loginPage.status })
+      return { cookies, ticket: ssoTicket }
+    }
+  }
+
   if (!execution) {
     // CAS 对未注册的 service 返回的是 "Application Not Authorized" 页，
     // 表现就是取不到 execution。把原因说清楚，别让人以为是网络问题。
@@ -144,14 +176,7 @@ export async function casAuthenticate({ username = '', password = '', service, f
   }
 
   const location = casResponse.headers.get('location') || ''
-  let ticket = ''
-  if (location) {
-    try {
-      ticket = new URL(location).searchParams.get('ticket') || ''
-    } catch {
-      ticket = ''
-    }
-  }
+  const ticket = ticketFromLocation(location)
 
   log('cas:post', { service, status: casResponse.status, hasTicket: Boolean(ticket) })
 
@@ -163,7 +188,9 @@ export async function casAuthenticate({ username = '', password = '', service, f
     })
   }
 
-  return { cookies, ticket }
+  // 把 POST 下发的 Cookie（含 CASTGC）并进罐子。只返回 GET 的 Cookie 的话，
+  // 调用方拿不到 SSO 会话，下一次认证还得重交密码——「复用 Cookie 罐」就落空了。
+  return { cookies: mergeCookies(cookies, joinCookies(casResponse.headers)), ticket }
 }
 
 /**
