@@ -80,10 +80,23 @@ async function submit() {
 
 <style scoped>
 .panel {
+  margin: 1rem 1rem 0;
   padding: 1.25rem;
   border: 1px solid var(--line);
-  border-radius: 0.75rem;
-  background: #fff;
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+  position: relative;
+}
+
+/* 顶部一条品牌色细带，给面板一个视觉锚点 */
+.panel::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 3px;
+  background: linear-gradient(90deg, var(--brand-600), var(--brand-500));
 }
 
 .panel-head {
@@ -100,14 +113,14 @@ h2 {
 
 .badge {
   padding: 0.15rem 0.5rem;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   font-size: 0.75rem;
 }
 
 .badge-ok {
   color: var(--ok);
-  background: #f0fdf4;
-  border: 1px solid #bbf7d0;
+  background: var(--ok-bg);
+  border: 1px solid var(--ok-line);
 }
 
 .hint {
@@ -154,49 +167,69 @@ h2 {
 }
 
 .login-form input {
-  padding: 0.5rem 0.625rem;
+  min-height: var(--touch);
+  padding: 0.5rem 0.75rem;
   border: 1px solid var(--line);
-  border-radius: 0.5rem;
+  border-radius: var(--radius-sm);
   font: inherit;
   color: var(--ink);
-  background: #fff;
+  background: var(--surface);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.login-form input:focus {
+  outline: none;
+  border-color: var(--brand-500);
+  box-shadow: 0 0 0 3px var(--brand-050);
+}
+
+@media (prefers-color-scheme: dark) {
+  .login-form input:focus {
+    box-shadow: 0 0 0 3px var(--brand-100);
+  }
 }
 
 .login-form input:disabled {
-  background: #f9fafb;
+  background: var(--surface-sunken);
 }
 
 .notice {
   margin: 0.75rem 0 0;
   padding: 0.5rem 0.75rem;
-  border-radius: 0.5rem;
+  border-radius: var(--radius-sm);
   font-size: 0.8125rem;
   line-height: 1.5;
 }
 
 .notice.error {
   color: var(--error);
-  background: #fef2f2;
-  border: 1px solid #fecaca;
+  background: var(--error-bg);
+  border: 1px solid var(--error-line);
 }
 
 .notice.success {
   color: var(--ok);
-  background: #f0fdf4;
-  border: 1px solid #bbf7d0;
+  background: var(--ok-bg);
+  border: 1px solid var(--ok-line);
 }
 
 button,
 .wecom {
   justify-self: start;
   /* 微信里是手指点，触摸目标不小于 44px */
-  min-height: 44px;
-  padding: 0.5rem 1rem;
+  min-height: var(--touch);
+  padding: 0.5rem 1.25rem;
   border: 1px solid transparent;
-  border-radius: 0.5rem;
+  border-radius: var(--radius-sm);
   font: inherit;
   text-decoration: none;
   cursor: pointer;
+  transition: filter 0.15s ease, transform 0.1s ease;
+}
+
+button:active,
+.wecom:active {
+  filter: brightness(0.96);
 }
 
 button:disabled {
@@ -206,19 +239,27 @@ button:disabled {
 
 .button-primary {
   color: #fff;
-  background: var(--ink);
+  background: linear-gradient(180deg, var(--brand-600), var(--brand-700));
+  box-shadow: var(--shadow-sm);
+  font-weight: 500;
 }
 
 .wecom {
   margin-top: 0.875rem;
   color: var(--ok);
-  background: #f0fdf4;
-  border-color: #bbf7d0;
+  background: var(--ok-bg);
+  border-color: var(--ok-line);
 }
 
 .button-secondary {
   color: var(--ink);
-  background: #fff;
+  background: var(--surface);
   border-color: var(--line);
+}
+
+@media (min-width: 48rem) {
+  .panel {
+    margin: 1.25rem 1.25rem 0;
+  }
 }
 </style>

@@ -66,7 +66,10 @@ onMounted(async () => {
 <template>
   <div class="shell">
     <header class="topbar">
-      <h1>BUPT-week</h1>
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">周</span>
+        <h1>BUPT-week</h1>
+      </div>
 
       <!-- 登录是页面里的常驻元素，不是门禁：未登录也能进、能切视图 -->
       <div class="topbar-auth">
@@ -110,6 +113,7 @@ onMounted(async () => {
     </main>
 
     <footer class="footnote">
+      <span class="status-dot" :class="`status-dot-${state === 'ok' ? 'ok' : state === 'checking' ? 'checking' : 'down'}`" aria-hidden="true"></span>
       <span v-if="state === 'checking'">正在连接后端…</span>
       <span v-else-if="state === 'ok'">后端已连接</span>
       <span v-else>后端未连接</span>
@@ -132,20 +136,43 @@ onMounted(async () => {
   align-items: center;
   justify-content: space-between;
   gap: 0.75rem;
-  padding: 0.75rem 1rem;
-  background: #fff;
+  padding: 0.625rem 1rem;
+  background: color-mix(in srgb, var(--surface) 86%, transparent);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
   border-bottom: 1px solid var(--line);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.brand-mark {
+  display: grid;
+  place-items: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  border-radius: 0.5rem;
+  background: linear-gradient(135deg, var(--brand-600), var(--brand-500));
+  box-shadow: var(--shadow-sm), inset 0 1px 0 rgb(255 255 255 / 0.25);
+  color: #fff;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  line-height: 1;
 }
 
 h1 {
   margin: 0;
   font-size: 1.0625rem;
+  letter-spacing: 0.01em;
 }
 
 .topbar-auth {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: 0.75rem;
   font-size: 0.8125rem;
 }
 
@@ -155,13 +182,29 @@ h1 {
 }
 
 .link-button {
-  min-height: 44px;
-  padding: 0 0.5rem;
-  border: none;
+  min-height: var(--touch);
+  padding: 0 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-pill);
   background: none;
-  color: var(--muted);
-  font: inherit;
+  color: var(--ink-soft);
+  font-size: 0.8125rem;
   cursor: pointer;
+  transition: color 0.15s ease, background 0.15s ease, border-color 0.15s ease;
+}
+
+.link-button:active {
+  color: var(--ink);
+  background: var(--surface-sunken);
+}
+
+@media (prefers-color-scheme: dark) {
+  /* 深色下顶栏对比弱，给退出一个实底避免融进背景 */
+  .link-button {
+    background: var(--surface-sunken);
+    border-color: var(--line);
+    color: var(--ink-soft);
+  }
 }
 
 .banner {
@@ -172,34 +215,47 @@ h1 {
 
 .banner-error {
   color: var(--error);
-  background: #fef2f2;
-  border-bottom: 1px solid #fecaca;
+  background: var(--error-bg);
+  border-bottom: 1px solid var(--error-line);
 }
 
+/* 分段控件：圆角容器内滑动高亮，比下划线 tab 更醒目 */
 .tabs {
   display: flex;
-  gap: 0;
-  padding: 0 1rem;
-  background: #fff;
-  border-bottom: 1px solid var(--line);
+  gap: 0.25rem;
+  margin: 0.75rem 1rem 0;
+  padding: 0.25rem;
+  background: var(--surface-sunken);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-pill);
 }
 
 .tab {
   flex: 1;
-  min-height: 44px;
+  min-height: var(--touch);
   padding: 0 0.5rem;
   border: none;
-  border-bottom: 2px solid transparent;
   background: none;
-  color: var(--muted);
+  color: var(--ink-soft);
   font: inherit;
   cursor: pointer;
+  border-radius: var(--radius-pill);
+  transition: color 0.18s ease, background 0.18s ease, box-shadow 0.18s ease;
 }
 
 .tab-active {
-  color: var(--ink);
-  font-weight: 500;
-  border-bottom-color: var(--ink);
+  color: var(--brand-700);
+  font-weight: 600;
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+}
+
+@media (prefers-color-scheme: dark) {
+  .tab-active {
+    color: #cfe0fa;
+    background: #2c313a;
+    box-shadow: 0 1px 2px rgb(0 0 0 / 0.4);
+  }
 }
 
 .view {
@@ -208,19 +264,57 @@ h1 {
 }
 
 .footnote {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
   padding: 0.75rem 1rem 1.5rem;
   color: var(--muted);
   font-size: 0.75rem;
-  text-align: center;
+}
+
+.status-dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+}
+
+.status-dot-ok {
+  background: var(--ok);
+}
+
+.status-dot-checking {
+  background: var(--warn);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+.status-dot-down {
+  background: var(--error);
+}
+
+@keyframes pulse {
+  50% {
+    opacity: 0.35;
+  }
 }
 
 @media (min-width: 48rem) {
   .shell {
-    max-width: 48rem;
+    max-width: 64rem;
     margin: 0 auto;
-    border-left: 1px solid var(--line);
-    border-right: 1px solid var(--line);
-    background: #fff;
+    background: var(--surface);
+    box-shadow: var(--shadow-md);
+    border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+  }
+
+  /* 桌面上两个 tab 占满 64rem 太空，收窄居中成分段胶囊 */
+  .tabs {
+    max-width: 26rem;
+    margin: 1rem auto 0;
+  }
+
+  .view {
+    padding: 1.25rem;
   }
 }
 </style>

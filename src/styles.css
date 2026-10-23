@@ -1,10 +1,71 @@
 :root {
-  color-scheme: light;
+  color-scheme: light dark;
+
+  /* 品牌蓝：取北邮校色域的深靛蓝，全站唯一强调色 */
+  --brand-700: #1746a2;
+  --brand-600: #1d56c4;
+  --brand-500: #2a6ce0;
+  --brand-100: #dbe7fb;
+  --brand-050: #eef4fd;
+
   --ink: #1a1d21;
+  --ink-soft: #3c434d;
   --muted: #6b7280;
   --line: #e5e7eb;
+  --line-soft: #eef0f3;
+  --surface: #ffffff;
+  --surface-sunken: #f6f7f9;
+  --page: #f2f4f7;
+
   --ok: #15803d;
+  --ok-bg: #f0fdf4;
+  --ok-line: #bbf7d0;
   --error: #b91c1c;
+  --error-bg: #fef2f2;
+  --error-line: #fecaca;
+
+  --danger: #c2410c;
+  --danger-bg: #ffedd5;
+  --warn: #a16207;
+  --warn-bg: #fef9c3;
+
+  --shadow-sm: 0 1px 2px rgb(23 29 36 / 0.05);
+  --shadow-md: 0 4px 16px -4px rgb(23 29 36 / 0.12);
+  --shadow-lg: 0 12px 32px -8px rgb(23 29 36 / 0.18);
+
+  --radius-sm: 0.5rem;
+  --radius-md: 0.75rem;
+  --radius-lg: 1rem;
+  --radius-pill: 999px;
+
+  /* 触摸目标：微信 webview 手指点，交互元素统一不小于 44px */
+  --touch: 44px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ink: #e8eaee;
+    --ink-soft: #c3c8d0;
+    --muted: #8d939e;
+    --line: #33383f;
+    --line-soft: #2a2e34;
+    --surface: #1e2126;
+    --surface-sunken: #17191d;
+    --page: #121417;
+
+    --brand-700: #a8c4f5;
+    --brand-600: #7ea8ef;
+    --brand-500: #5b8ee8;
+    --brand-100: #243447;
+    --brand-050: #1c2735;
+
+    --ok-bg: #12281a;
+    --ok-line: #245c36;
+    --error-bg: #2f1414;
+    --error-line: #6b2424;
+    --danger-bg: #33200f;
+    --warn-bg: #2e270e;
+  }
 }
 
 * {
@@ -17,8 +78,9 @@ body {
   margin: 0;
   font-family: system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
   color: var(--ink);
-  background: #fafafa;
+  background: var(--page);
   -webkit-text-size-adjust: 100%;
+  -webkit-tap-highlight-color: transparent;
 }
 
 /* 微信 webview 里点输入框会放大页面，固定字号避免缩放 */
@@ -27,4 +89,22 @@ textarea,
 select,
 button {
   font-size: 16px;
+}
+
+:focus-visible {
+  outline: 2px solid var(--brand-500);
+  outline-offset: 2px;
+}
+
+::selection {
+  background: var(--brand-100);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
 }
