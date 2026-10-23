@@ -1,0 +1,34 @@
+name: gate
+
+# 全量门禁：PR 与 master 推送都必须全绿。
+# 与 deploy.yml 的关系：deploy 只做快速兜底（单元+构建+发 Pages），
+# 这里跑完整门禁（含浏览器测试、安全审计、性能预算），失败即红。
+#
+# 本地等价命令：npm run gate（浏览器用 BROWSER_EXECUTABLE 指系统 Edge 时）
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      # CI 上网络好，直接下 playwright 的 chromium（本地慢才用 BROWSER_EXECUTABLE 指系统浏览器）
+      - run: npx playwright install --with-deps chromium
+      - name: 跑门禁（单元 → 安全 → 构建 → 浏览器 → 性能）
+        run: npm run gate

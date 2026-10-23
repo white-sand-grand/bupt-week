@@ -56,16 +56,32 @@ BUPT 学生用的个人工具，只做三件事：查课表、看作业、给交
 ## 验证
 
 ```sh
-npm test            # 181 个接口/单元测试，不需要浏览器（Windows 上也可跑）
-npm run test:browser # 31 个浏览器测试，需要 chromium
+npm run gate        # 全量门禁：单元 → 安全 → 构建 → 浏览器 → 性能，快失败
+npm test            # 199 个接口/单元测试，不需要浏览器（Windows 上也可跑）
+npm run test:browser # 33 个浏览器测试，需要 chromium
 npm run build       # 前端构建，产物相对路径（Pages 子路径部署）
 ```
+
+`npm run gate` 是合并前的最终检查，CI（`.github/workflows/gate.yml`）在 PR 和
+master 推送上跑同一条命令。它比 `npm test` 多三道闸：
+
+- **安全**（`scripts/gate/security.mjs`）：npm audit 生产依赖高危拦截（中低危只警告）、
+  密钥扫描（私钥/令牌/源码里的真实学号；宁漏勿误报）、进程内起后端探响应头
+  （no-store / nosniff / no-referrer，与 `tests/security-headers.test.js` 同步维护）。
+- **体积预算**（`scripts/gate/performance.mjs`）：dist/ 的 JS/CSS gzip 实测对预算
+  （当前实测 JS gzip ~35KB，预算 60KB——预算拦的是数量级恶化，不是精确基准）。
+- **运行时冒烟**：`vite preview` 起生产构建 + mock 后端，量冷启动 DCL/load、
+  登录→课表渲染耗时、首屏 JS/CSS 请求数，阈值宽松防 flake。
+
+有意放宽预算或豁免某项时，改 `scripts/gate/` 里对应常量并在 commit message 里写明理由。
+前端 CSP 不加是有意为之：跨域部署形态（Pages + Workers）的 connect-src 取决于
+构建时的 VITE_BACKEND_URL，静态 CSP 会把部署打断。
 
 浏览器测试是单独一个脚本，不并进 `npm test`：它要先装 chromium，且慢一个量级。
 首次使用前执行 `npx playwright install chromium`——只装完整的 chromium 构建即可，
 `chrome-headless-shell` 下载失败不影响（测试用 `channel: 'chromium'` 指定完整构建）。
-chromium 下载不动时，可用系统浏览器顶替：
-`BROWSER_EXECUTABLE="C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe" npm run test:browser`。
+chromium 下载不动时，可用系统浏览器顶替（gate 及其子命令同样吃这个变量）：
+`BROWSER_EXECUTABLE="C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe" npm run gate`。
 
 改完 `server/` 必须两个入口都验：`npm run server` 和 `npx wrangler dev`。
 改完前端必须 `npm run build` 通过——它是 SFC 编译的真门槛（dev server 有模块缓存，200 不代表编译成功）。

@@ -10,6 +10,9 @@
     "server": "node scripts/with-env-proxy.mjs server/entries/node.js",
     "test": "node --test tests/*.test.js",
     "test:browser": "node --test tests/browser/*.test.js",
+    "gate": "node scripts/with-env-proxy.mjs scripts/gate/run.mjs",
+    "gate:security": "node scripts/with-env-proxy.mjs scripts/gate/security.mjs",
+    "gate:performance": "node scripts/with-env-proxy.mjs scripts/gate/performance.mjs",
     "deploy:worker": "wrangler deploy"
   },
   "dependencies": {

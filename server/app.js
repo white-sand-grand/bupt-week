@@ -20,6 +20,9 @@ export function createBackend({ getSessionStore = null, allowedOrigins = [], fro
   app.use('/api/*', async (c, next) => {
     // 接口响应一律不缓存，避免代理层把登录态相关的数据缓存下来。
     c.header('Cache-Control', 'no-store')
+    // 基础加固：MIME 嗅探关闭、referrer 不外泄（接口域名不该出现在下游站点的来源里）
+    c.header('X-Content-Type-Options', 'nosniff')
+    c.header('Referrer-Policy', 'no-referrer')
     await next()
   })
 

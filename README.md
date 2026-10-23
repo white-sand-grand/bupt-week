@@ -124,11 +124,16 @@ Windows 上 `npm test` / `npm run dev` / `npm run server` 可直接使用。
 附件下载的链路与为什么必须经服务端，见 [`docs/api-reference.md`](docs/api-reference.md) 2.6–2.8 节。
 
 ```sh
-npm test            # 181 个接口/单元测试，不需要浏览器
-npm run test:browser # 31 个浏览器测试，需要 chromium
+npm run gate        # 全量门禁（单元 → 安全审计/密钥扫描 → 构建 → 浏览器 → 性能预算）
+npm test            # 199 个接口/单元测试，不需要浏览器
+npm run test:browser # 33 个浏览器测试，需要 chromium
 npm run build       # 前端构建，产物在 dist/（相对路径，适配 Pages）
 npx wrangler dev    # 本地 Workers 运行时，与 Node 入口共用同一份 server/
 ```
+
+CI（`.github/workflows/gate.yml`）在 PR 和 master 推送上跑同一条 `npm run gate`：
+生产依赖高危漏洞、密钥泄漏模式、响应头基线（no-store/nosniff/no-referrer）、
+构建体积预算（JS gzip ≤ 60KB）与生产构建运行时冒烟，任一失败即红。
 
 首次跑浏览器测试前：`npx playwright install chromium`。只装完整的 chromium 构建即可，
 `chrome-headless-shell` 下载失败不影响——测试用 `channel: 'chromium'` 指定完整构建。
