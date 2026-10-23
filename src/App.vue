@@ -137,6 +137,8 @@ onMounted(async () => {
   justify-content: space-between;
   gap: 0.75rem;
   padding: 0.625rem 1rem;
+  /* 先给实底再叠半透明混合：不支持 color-mix 的旧内核拿到实底，顶栏不会透 */
+  background: var(--surface);
   background: color-mix(in srgb, var(--surface) 86%, transparent);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
@@ -268,7 +270,7 @@ h1 {
   align-items: center;
   justify-content: center;
   gap: 0.4rem;
-  padding: 0.75rem 1rem 1.5rem;
+  padding: 0.75rem 1rem calc(1.5rem + env(safe-area-inset-bottom, 0px));
   color: var(--muted);
   font-size: 0.75rem;
 }

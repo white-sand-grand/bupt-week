@@ -73,7 +73,9 @@ function shiftWeek(delta) {
 }
 
 /** 网格横向超宽时，把「今天」列滚进视口并大致居中——
- *  否则手机首屏只能看到周一到周三，今天在第几列完全不可知。 */
+ *  否则手机首屏只能看到周一到周三，今天在第几列完全不可知。
+ *  数据就绪有两条路径：异步 sync 后 activeWeek 变化（watch 兜住），
+ *  以及组件重挂载时缓存已就绪、activeWeek 不再变化（onMounted 兜住）。 */
 async function revealTodayColumn() {
   if (revealedToday) return
   const scroller = gridScroll.value
@@ -87,6 +89,10 @@ async function revealTodayColumn() {
 }
 
 watch(() => timetable.activeWeek.value, () => {
+  nextTick(revealTodayColumn)
+})
+
+onMounted(() => {
   nextTick(revealTodayColumn)
 })
 
@@ -256,7 +262,9 @@ h2 {
   min-height: var(--touch);
   padding: 0 0.5rem;
   border: none;
-  font: inherit;
+  /* 只继承字体族，字号走全局 select 16px 规则（防聚焦缩放） */
+  font-family: inherit;
+  font-size: 16px;
   color: var(--ink);
   background: transparent;
   cursor: pointer;
@@ -370,6 +378,7 @@ h2 {
 }
 
 .cell-today {
+  background: rgba(42, 108, 224, 0.09);
   background: color-mix(in srgb, var(--brand-500) 9%, transparent);
 }
 
@@ -378,6 +387,17 @@ h2 {
   color: var(--muted);
   font-weight: 400;
   font-size: 0.6875rem;
+}
+
+/* 节次列横向 sticky：滚动看后半周时仍知道当前是第几节。
+   要铺实底色，否则课程块会从底下透出来。 */
+.corner,
+.period {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  background: var(--surface);
+  box-shadow: inset -1px 0 0 var(--line-soft);
 }
 
 .corner {

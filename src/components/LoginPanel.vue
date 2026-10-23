@@ -171,7 +171,10 @@ h2 {
   padding: 0.5rem 0.75rem;
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
-  font: inherit;
+  /* 只继承字体族；字号钉 16px——label 是 13px，用 font:inherit 会连带继承，
+     iOS/微信聚焦输入框时就会放大整页（styles.css 的全局 16px 会被覆盖） */
+  font-family: inherit;
+  font-size: 16px;
   color: var(--ink);
   background: var(--surface);
   transition: border-color 0.15s ease, box-shadow 0.15s ease;

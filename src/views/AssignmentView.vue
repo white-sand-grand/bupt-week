@@ -38,10 +38,11 @@ const LEVEL_CARD_CLASS = {
 const downloadErrors = ref({})
 
 /** 截止时间的口语化表述：今天/明天直接点名，其余落回「月/日 时:分」。
- *  deadline 是无时区的北京时间墙上钟，因此也按北京日期比较。 */
+ *  deadline 是无时区的北京时间墙上钟，因此也按北京日期比较；
+ *  格式不合预期（脏数据）时返回空串，宁可不显示也不给垃圾文本。 */
 function deadlineLabel(assignment) {
   const raw = assignment.deadline
-  if (!raw) return ''
+  if (!/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}/.test(raw || '')) return ''
   const date = raw.slice(0, 10)
   const time = raw.slice(11, 16)
   const beijing = (offsetDays) =>
@@ -115,7 +116,7 @@ const groups = computed(() => assignmentsStore.groups.value)
             <span v-if="assignment.chapter" class="card-chapter">{{ assignment.chapter }}</span>
             <span class="card-meta">
               <span class="badge" :class="LEVEL_CLASS[assignment.level]">{{ assignment.status }}</span>
-              <span v-if="assignment.deadline" class="deadline">{{ deadlineLabel(assignment) }}</span>
+              <span v-if="deadlineLabel(assignment)" class="deadline">{{ deadlineLabel(assignment) }}</span>
             </span>
           </button>
 
@@ -254,10 +255,12 @@ h3 {
 }
 
 .card-overdue {
+  background: rgba(185, 28, 28, 0.04);
   background: color-mix(in srgb, var(--error) 4%, var(--surface));
 }
 
 .card-danger {
+  background: rgba(234, 88, 12, 0.04);
   background: color-mix(in srgb, #ea580c 4%, var(--surface));
 }
 
@@ -270,10 +273,12 @@ h3 {
   opacity: 0.72;
 }
 
-/* 紧急度色条：贴卡片左缘，颜色与角标语义一致 */
+/* 紧急度色条：贴卡片左缘，颜色与角标语义一致（展开式写法，兼容旧 webview 内核） */
 .level-bar {
   position: absolute;
-  inset: 0 auto 0 0;
+  top: 0;
+  bottom: 0;
+  left: 0;
   width: 4px;
 }
 

@@ -777,6 +777,135 @@ test('课表：切换周次只读缓存，不再请求后端', async () => {
   }
 })
 
+// ── 移动端质量 ────────────────────────────────────────────────────────────────
+
+/** 把「今天」钉在周六的课表 mock：390px 视口下周六必然在横向滚动区外，
+ *  今日列定位逻辑因此是确定性的（不随真实星期几波动）。
+ *  周一 = 北京今天 - 5 天，周六 = 今天。 */
+function mockTimetableTodayOnSaturday(route) {
+  const body = route.request().postDataJSON() || {}
+  const week = body.week ?? 18
+  const today = new Date(`${new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Shanghai' })}T00:00:00Z`)
+  const monday = new Date(today)
+  monday.setUTCDate(monday.getUTCDate() - 5 + (week === 18 ? 0 : 7))
+  const dayDate = (i) => {
+    const d = new Date(monday)
+    d.setUTCDate(d.getUTCDate() + i)
+    return d.toISOString().slice(0, 10)
+  }
+  return fulfill(route, {
+    success: true,
+    data: {
+      timetable: {
+        week,
+        mode: 'A'.repeat(32),
+        date: dayDate(0),
+        weeks: [18, 19],
+        modes: [],
+        days: Array.from({ length: 7 }, (_, i) => ({ label: `星期${'一二三四五六日'[i]}`, date: dayDate(i) })),
+        periods: [
+          { number: 1, time: '08:00~08:45' },
+          { number: 2, time: '08:55~09:40' },
+          { number: 3, time: '10:00~10:45' },
+          { number: 4, time: '10:55~11:40' },
+          { number: 5, time: '14:00~14:45' },
+          { number: 6, time: '14:55~15:40' },
+        ],
+        courses: [
+          { name: '高等数学', day: 1, start: 1, end: 2, location: '教三-101', campus: '西土城', schedule: '[1-2]节', details: [] },
+          { name: '数据结构', day: 2, start: 3, end: 4, location: '教二-305', campus: '西土城', schedule: '[3-4]节', details: [] },
+          { name: '概率论', day: 6, start: 3, end: 3, location: '教三-210', campus: '西土城', schedule: '[3]节', details: [] },
+        ],
+      },
+    },
+  })
+}
+
+test('移动端：今日列自动定位、重挂载后仍在、无横向溢出、触摸目标达标', async () => {
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 } })
+  const page = await context.newPage()
+  try {
+    await page.route('**/api/auth/login', (route) => fulfill(route, LOGIN_OK))
+    await page.route('**/api/jwgl/session', (route) => fulfill(route, { success: true, data: { sessionId: 'jw-sid', username: '2021001234', expiresAt: EXPIRES_AT } }))
+    await page.route('**/api/ucloud/session', (route) => fulfill(route, UCLOUD_SESSION))
+    await page.route('**/api/jwgl/timetable', mockTimetableTodayOnSaturday)
+    await page.route('**/api/ucloud/assignments', (route) => fulfill(route, ASSIGNMENTS_FIXTURE()))
+    await page.route('**/api/ucloud/assignment/detail', (route) =>
+      fulfill(route, { success: true, data: { attachments: [{ resourceId: 'r1', resourceName: '实验一说明.pdf' }] } }))
+
+    await page.goto(APP_ORIGIN, { waitUntil: 'networkidle' })
+
+    // 微信 webview 聚焦输入框会放大页面：输入控件字号必须钉在 16px
+    const inputFont = await page.evaluate(() => getComputedStyle(document.querySelector('.login-form input')).fontSize)
+    assert.equal(inputFont, '16px', '输入框字号应保持 16px 防止 iOS 聚焦缩放')
+
+    await page.fill(`${panel} input[type="text"]`, '2021001234')
+    await page.fill(`${panel} input[type="password"]`, 'pw')
+    await page.click(`${panel} button[type="submit"]`)
+    await page.waitForFunction(() => document.querySelectorAll('.panel').length === 0)
+    await page.waitForSelector('.grid')
+
+    // 首次渲染：周六（今天）在滚动区外，应自动滚入并让表头进入视口
+    await page.waitForFunction(() => document.querySelector('.grid-scroll')?.scrollLeft > 0, { timeout: 3000 })
+    const todayVisible = await page.evaluate(() => {
+      const th = document.querySelector('thead th.today')
+      if (!th) return false
+      const rect = th.getBoundingClientRect()
+      return rect.left >= 0 && rect.right <= window.innerWidth
+    })
+    assert.ok(todayVisible, '今日列表头应在视口内')
+
+    // 页面本身不允许横向溢出（横向滚动只发生在网格容器内部）
+    const pageOverflow = await page.evaluate(
+      () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+    )
+    assert.ok(pageOverflow <= 0, `页面横向溢出 ${pageOverflow}px`)
+
+    // 触摸目标：所有可见 button/a/select 高度 ≥ 44px（浮点渲染留 0.5px 容差）
+    const undersized = await page.evaluate(() => {
+      const targets = [...document.querySelectorAll('button, a, select')]
+      return targets
+        .filter((el) => el.offsetParent !== null)
+        .filter((el) => el.getBoundingClientRect().height < 43.5)
+        .map((el) => el.className || el.tagName)
+    })
+    assert.deepEqual(undersized, [], `触摸目标不足 44px：${undersized.join(', ')}`)
+
+    // 切到作业再切回（组件重挂载、activeWeek 不再变化），今日列定位必须仍然生效
+    await page.click('.tabs button:nth-child(2)')
+    await page.waitForSelector('.card')
+    await page.locator('.card-main').first().click()
+    await page.waitForSelector('.card-detail')
+
+    // 展开态（附件/去交作业按钮可见）下触摸目标同样达标
+    const undersizedOpen = await page.evaluate(() => {
+      const targets = [...document.querySelectorAll('button, a, select')]
+      return targets
+        .filter((el) => el.offsetParent !== null)
+        .filter((el) => el.getBoundingClientRect().height < 43.5)
+        .map((el) => el.className || el.tagName)
+    })
+    assert.deepEqual(undersizedOpen, [], `展开态触摸目标不足 44px：${undersizedOpen.join(', ')}`)
+
+    const assignmentOverflow = await page.evaluate(
+      () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+    )
+    assert.ok(assignmentOverflow <= 0, `作业页横向溢出 ${assignmentOverflow}px`)
+
+    await page.click('.tabs button:nth-child(1)')
+    await page.waitForSelector('.grid')
+    await page.waitForFunction(() => document.querySelector('.grid-scroll')?.scrollLeft > 0, { timeout: 3000 })
+
+    // 周切换：第一周禁用「上一周」，点「下一周」落到第 19 周
+    assert.ok(await page.locator('.week-step').first().isDisabled(), '第一周应禁用上一周')
+    await page.locator('.week-step').nth(1).click()
+    await page.waitForFunction(() => document.querySelector('.week-picker select')?.value === '19')
+  } finally {
+    await page.close()
+    await context.close()
+  }
+})
+
 // ── 作业 ────────────────────────────────────────────────────────────────────
 
 /** 北京时间墙上钟字符串（学校接口的格式），相对当前时间偏移 offsetMs。 */

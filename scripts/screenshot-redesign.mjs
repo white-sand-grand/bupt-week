@@ -1,5 +1,9 @@
 // 改版视觉验证专用：起 vite + Edge，route mock 数据，多视口/主题截图。
-// 不进测试基线，跑完即弃（产物在 .screenshots/）。
+// 不进测试基线，跑完即弃（产物在 scripts/.screenshots/）。
+//
+// 已知伪影：整个浏览器会话的第一个 /api/health 请求可能漏过 context.route
+// 拦截打到 vite 代理（ECONNREFUSED 报错）。应用侧应答正常（footnote 后端已连接、
+// 无错误横幅），已用最小复现验证过，勿再排查——是 playwright/Edge 首导航竞态。
 import { createServer as createViteServer } from 'vite'
 import { chromium } from 'playwright'
 import { mkdir } from 'node:fs/promises'
@@ -78,19 +82,22 @@ const ASSIGNMENTS = {
 const fulfill = (route, body, status = 200) =>
   route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) })
 
-async function loginAndOpen(page, view) {
-  await page.route('**/api/health', (route) => fulfill(route, { success: true }))
-  await page.route('**/api/auth/login', (route) => fulfill(route, LOGIN_OK))
-  await page.route('**/api/jwgl/session', (route) => fulfill(route, { success: true, data: { sessionId: 'jw-sid', username: '2021001234', expiresAt: EXPIRES_AT } }))
-  await page.route('**/api/ucloud/session', (route) => fulfill(route, UCLOUD_SESSION))
-  await page.route('**/api/jwgl/timetable', (route) => {
+// mock 挂在 context 级：页面一创建即生效，避免首帧请求抢在 page.route 注册前漏网
+async function installMocks(context) {
+  await context.route('**/api/health', (route) => fulfill(route, { success: true }))
+  await context.route('**/api/auth/login', (route) => fulfill(route, LOGIN_OK))
+  await context.route('**/api/jwgl/session', (route) => fulfill(route, { success: true, data: { sessionId: 'jw-sid', username: '2021001234', expiresAt: EXPIRES_AT } }))
+  await context.route('**/api/ucloud/session', (route) => fulfill(route, UCLOUD_SESSION))
+  await context.route('**/api/jwgl/timetable', (route) => {
     const body = route.request().postDataJSON() || {}
     fulfill(route, timetableBody(body.week ?? 18))
   })
-  await page.route('**/api/ucloud/assignments', (route) => fulfill(route, ASSIGNMENTS))
-  await page.route('**/api/ucloud/assignment/detail', (route) =>
+  await context.route('**/api/ucloud/assignments', (route) => fulfill(route, ASSIGNMENTS))
+  await context.route('**/api/ucloud/assignment/detail', (route) =>
     fulfill(route, { success: true, data: { attachments: [{ resourceId: 'r1', resourceName: '实验一说明.pdf' }, { resourceId: 'r2', resourceName: '样例代码.zip' }] } }))
+}
 
+async function loginAndOpen(page, view) {
   await page.goto('http://localhost:5173', { waitUntil: 'networkidle' })
   await page.fill('.login-form input[type="text"]', '2021001234')
   await page.fill('.login-form input[type="password"]', 'pw')
@@ -129,6 +136,7 @@ try {
       colorScheme: shot.scheme,
       deviceScaleFactor: 2,
     })
+    await installMocks(context)
     const page = await context.newPage()
     await loginAndOpen(page, shot.view)
     await page.screenshot({ path: `${OUT_DIR}/${shot.name}.png`, fullPage: true })
@@ -136,10 +144,10 @@ try {
     console.log(`saved ${shot.name}`)
   }
 
-  // 未登录首屏（移动端）
+  // 未登录首屏（移动端）：只给健康检查，其余走真实失败路径
   const context = await browser.newContext({ viewport: { width: 390, height: 844 }, colorScheme: 'light', deviceScaleFactor: 2 })
+  await context.route('**/api/health', (route) => fulfill(route, { success: true }))
   const page = await context.newPage()
-  await page.route('**/api/health', (route) => fulfill(route, { success: true }))
   await page.goto('http://localhost:5173', { waitUntil: 'networkidle' })
   await page.waitForTimeout(500)
   await page.screenshot({ path: `${OUT_DIR}/mobile-light-login.png`, fullPage: true })
