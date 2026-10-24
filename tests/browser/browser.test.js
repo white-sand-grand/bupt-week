@@ -222,6 +222,47 @@ test('下载链路：上游 404 时抛出可读错误', async () => {
   }
 })
 
+test('下载链路：流式读取的进度回调最后报满（received === total > 0）', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(
+      `${APP_ORIGIN}/tests/browser/fixtures/download-harness.html` +
+        `?url=${encodeURIComponent('/tests/browser/fixtures/sample.pdf')}` +
+        `&name=${encodeURIComponent('作业附件-第一章.pdf')}`,
+    )
+
+    await page.click('#download-progress')
+    await page.waitForFunction(
+      () => document.getElementById('result').textContent.startsWith('progress: '),
+      { timeout: 10000 },
+    )
+
+    const last = JSON.parse((await page.textContent('#result')).slice('progress: '.length))
+    assert.ok(last.received > 0, `应收到字节数，实际 ${JSON.stringify(last)}`)
+    assert.equal(last.received, last.total, 'total 不应为 null（Content-Length 必须透传到前端）')
+  } finally {
+    await page.close()
+  }
+})
+
+test('下载链路：解析请求的 body 带上 sessionId（漏发会被服务端当未登录，永远 401）', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(`${APP_ORIGIN}/tests/browser/fixtures/download-harness.html`)
+
+    await page.click('#resolve')
+    await page.waitForFunction(
+      () => document.getElementById('result').textContent.startsWith('body: '),
+      { timeout: 10000 },
+    )
+
+    const sent = JSON.parse((await page.textContent('#result')).slice('body: '.length))
+    assert.deepEqual(sent, { sessionId: 'sid-from-harness', resourceId: 'res-1' })
+  } finally {
+    await page.close()
+  }
+})
+
 // ── CORS ────────────────────────────────────────────────────────────────────
 
 test('CORS：已放行的来源在真实浏览器里能调到后端', async () => {
@@ -1568,6 +1609,95 @@ test('部署形态下接口请求也打到后端域名', async () => {
   }
 })
 
+// ── 课件 ────────────────────────────────────────────────────────────────────
+
+/** 一门课的资料树 mock：目录 + 两份文件 + 一个外部链接，children 递归一层。 */
+const COURSEWARE_TREE = [
+  {
+    id: 'node-1',
+    resourceName: '第一章 函数与极限',
+    resourceTypeName: '章节',
+    children: [
+      {
+        id: 'node-1-1',
+        resourceName: '习题课',
+        children: [],
+        attachmentVOs: [
+          { type: '1', resource: { id: 'res-exercise', name: '习题答案.pdf', ext: 'pdf', fileSizeUnit: '1.2MB' } },
+        ],
+      },
+    ],
+    attachmentVOs: [
+      { type: '1', resource: { id: 'res-lec', name: '讲义.pdf', ext: 'pdf', fileSizeUnit: '2.5MB' } },
+      { type: '2', siteResourceLink: { title: '国家精品课链接', link: 'https://example.com/course' } },
+    ],
+  },
+]
+
+test('课件：选课程 → 一页铺开多份资料 → 点文件名下载落盘（文件名是课件名）', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.route('**/api/auth/login', (route) => fulfill(route, LOGIN_OK))
+    await page.route('**/api/jwgl/session', (route) => fulfill(route, { success: true, data: { sessionId: 'jw-sid', username: '2021001234', expiresAt: EXPIRES_AT } }))
+    await page.route('**/api/ucloud/session', (route) => fulfill(route, UCLOUD_SESSION))
+    await page.route('**/api/ucloud/courses', (route) =>
+      fulfill(route, { success: true, data: { courses: [{ id: 'site-1', name: '高等数学' }, { id: 'site-2', name: '大学物理' }] } }),
+    )
+    await page.route('**/api/ucloud/courseware', (route) => {
+      const { siteId } = route.request().postDataJSON()
+      return fulfill(route, { success: true, data: { tree: siteId === 'site-1' ? COURSEWARE_TREE : [] } })
+    })
+    await page.route('**/api/ucloud/resource/download', (route) =>
+      fulfill(route, { success: true, data: { fileUrl: '/file/ucloud/document/lec.pdf?sig=1' } }),
+    )
+    const pdf = readFileSync(new URL('./fixtures/sample.pdf', import.meta.url))
+    await page.route('**/file/**', (route) =>
+      route.fulfill({
+        status: 200,
+        headers: { 'Content-Type': 'application/pdf', 'Content-Length': String(pdf.length) },
+        body: pdf,
+      }),
+    )
+
+    await page.goto(APP_ORIGIN, { waitUntil: 'networkidle' })
+    await page.fill(`${panel} input[type="text"]`, '2021001234')
+    await page.fill(`${panel} input[type="password"]`, 'pw')
+    await page.click(`${panel} button[type="submit"]`)
+    await page.waitForFunction(() => document.querySelectorAll('.panel').length === 0)
+
+    // 课件 tab（按文本定位，位置随 tab 增减会漂）
+    await page.click('.tabs button:has-text("课件")')
+    assert.equal(await page.textContent('.view h2'), '课件')
+
+    // 课程 chips 渲染，默认选第一门；资料一页铺开：目录行 + 两份文件 + 链接
+    await page.waitForFunction(() => document.querySelector('.chip-active')?.textContent === '高等数学')
+    assert.match(await page.textContent('.course-chips'), /大学物理/)
+    await page.waitForFunction(() => document.querySelector('.resource-list')?.textContent.includes('习题答案.pdf'))
+
+    const listText = await page.textContent('.resource-list')
+    assert.match(listText, /第一章 函数与极限/)
+    assert.match(listText, /习题课/)
+    assert.match(listText, /讲义\.pdf/)
+    assert.match(listText, /国家精品课链接/)
+
+    // 外部链接是新标签锚点，不是下载按钮
+    const link = page.locator('.resource-list a[href="https://example.com/course"]')
+    assert.equal(await link.count(), 1)
+
+    // 点课件名下载：走 resource/download 换链 + /file 代理，落盘文件名是课件名
+    const downloadPromise = page.waitForEvent('download')
+    await page.click('.resource-list button:has-text("讲义.pdf")')
+    const download = await downloadPromise
+    assert.equal(download.suggestedFilename(), '讲义.pdf')
+
+    // 换一门没有资料的课：空态文案
+    await page.click('.chip:has-text("大学物理")')
+    await page.waitForFunction(() => document.querySelector('.view .empty')?.textContent.includes('还没有上传过课件'))
+  } finally {
+    await page.close()
+  }
+})
+
 // ── 班级 ────────────────────────────────────────────────────────────────────
 
 /** 班级接口的 mock：列表固定返回一个班，作业列表可动态追加。 */
@@ -1634,7 +1764,7 @@ test('班级：创建班级 → 录入作业 → 班级列表与作业 tab 合�
     await page.waitForFunction(() => document.querySelectorAll('.panel').length === 0)
 
     // 班级 tab：空态双入口 → 创建班级
-    await page.click('.tabs button:nth-child(3)')
+    await page.click('.tabs button:has-text("班级")')
     assert.equal(await page.textContent('.view h2'), '班级')
     await page.waitForSelector('.view .entry-toggle')
     assert.match(await page.textContent('.view .empty'), /还没有加入任何班级/)
@@ -1731,7 +1861,7 @@ test('班级：可继续加入第二个班、作业按科目分组呈现、创�
     await page.waitForFunction(() => document.querySelectorAll('.panel').length === 0)
 
     // 已有一个班时，「加入或创建班级」入口仍在——可以继续加入
-    await page.click('.tabs button:nth-child(3)')
+    await page.click('.tabs button:has-text("班级")')
     await page.waitForSelector('.view .class-card')
     await page.click('.view .entry-toggle:has-text("加入或创建班级")')
 
@@ -1753,7 +1883,7 @@ test('班级：可继续加入第二个班、作业按科目分组呈现、创�
 
     // 解散：两步确认后当前班消失。剩下一个班（别人创建的）——切换器消失、
     // 且没有解散按钮（解散是创建者专属，非创建班看不到）
-    await page.click('.tabs button:nth-child(3)')
+    await page.click('.tabs button:has-text("班级")')
     await page.waitForSelector('.view .dissolve-button')
     await page.click('.view .dissolve-button')
     assert.match(await page.textContent('.view .dissolve-button'), /确认解散/)

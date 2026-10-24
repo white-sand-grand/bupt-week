@@ -330,6 +330,26 @@ Content-Type: application/json
 
 **防穿越**：`target.pathname` 是用 URL API 赋值而不是字符串拼 `href`，所以 `..` 会被规范化、`//evil.com` 也变不成 host。带 `..` 的路径在路由层就被折叠掉，根本进不了代理。测试里四种变形路径都断言了 origin 不变。
 
+### 2.10 课程资料树（课件）【参考 MYUCLOUD 源码，待实测】
+
+```
+POST /ucloud/ykt-site/site-resource/tree/student?siteId=<课程ID>&userId=<学号>
+Blade-Auth: <access_token>
+Authorization: Basic c3dvcmQ6c3dvcmRfc2VjcmV0
+Tenant-Id: 000000
+Content-Type: application/json
+
+{}
+```
+
+返回 `data` 是资料树数组；这门课没传过资料时 `data` 为 `null`（正常态）。端点与字段名均取自参考实现 AuceptinFang/MYUCLOUD（src/api/ucloud.js `getCourseResources`、CourseResourcePanel.vue），**尚未用真实账号实测**——字段按防御式读取写的（存在别名）：
+
+- 目录节点：`id`、`resourceName`（还有别名 `name`/`title`）、`resourceTypeName`、`children[]`、`attachmentVOs[]`（别名 `attachments`）。
+- 附件 VO：`type=2` 是外部链接（标题/地址在 `siteResourceLink.{title,link}`，`resource` 可能为空）；否则文件信息在 `resource.{id, name, ext, fileSizeUnit, url}`，其中 **`resource.id` 就是下载用的 resourceId**，走既有 §2.6 `preview-url` → `/file` 链路。`fileSizeUnit` 是「2.5MB」这类现成文案。
+- `recommendLearnTime`（建议学习时长）非正数就不展示。
+
+本项目封装：`server/services/courseware.js listCoursewareTree`（薄后端，树原样透传，拉平在前端 `src/composables/coursewareStore.js`）。本站入口 `POST /api/ucloud/courseware`（userId 从会话取）。
+
 ### 2.9 本期不实现的接口
 
 `ykt-site/work/submit`（提交作业）、`blade-source/resource/upload/biz`（上传附件）。列在这里只是为了说明「已知但故意不做」，避免以后重复调研。
@@ -570,6 +590,8 @@ POST /api/ucloud/logout        { sessionId }
 POST /api/ucloud/assignments   { sessionId }           → 全量作业 records 透传
 POST /api/ucloud/assignment/detail { sessionId, assignmentId } → 附件元数据
 POST /api/ucloud/resource/download { sessionId, resourceId }   → /file 下载路径
+POST /api/ucloud/courses       { sessionId }           → [{ id, name }] 课件选课
+POST /api/ucloud/courseware     { sessionId, siteId }    → 资料树 tree 透传（§2.10）
 
 POST /api/jwgl/session         { sessionId }           → 校验（jwgl Cookie 会话或
                                                          jwglweixin token 会话）

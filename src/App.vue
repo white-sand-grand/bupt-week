@@ -7,6 +7,7 @@ import { isInWechatBrowser } from './utils/platform.js'
 import LoginPanel from './components/LoginPanel.vue'
 import TimetableView from './views/TimetableView.vue'
 import AssignmentView from './views/AssignmentView.vue'
+import CoursewareView from './views/CoursewareView.vue'
 import ClassView from './views/ClassView.vue'
 
 const state = ref('checking')
@@ -125,6 +126,14 @@ onMounted(async () => {
         作业
       </button>
       <button
+        :class="['tab', { 'tab-active': view === 'courseware' }]"
+        type="button"
+        :aria-current="view === 'courseware'"
+        @click="view = 'courseware'"
+      >
+        课件
+      </button>
+      <button
         :class="['tab', { 'tab-active': view === 'class' }]"
         type="button"
         :aria-current="view === 'class'"
@@ -142,6 +151,7 @@ onMounted(async () => {
         :degraded="auth.loggedIn.value && !auth.jwglReady.value"
       />
       <AssignmentView v-else-if="view === 'assignment'" :ready="auth.ucloudReady.value" />
+      <CoursewareView v-else-if="view === 'courseware'" :ready="auth.ucloudReady.value" />
       <ClassView v-else />
     </main>
 

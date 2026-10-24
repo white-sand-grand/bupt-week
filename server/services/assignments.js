@@ -71,8 +71,9 @@ export async function listAssignments({ token, fetchImpl = fetch }) {
 
 /**
  * 课程列表（§2.2）。返回 [{ id, name }]，size=9999 一次拉全避免分页。
+ * 课件视图也要用（选课 → 拉该课的资料树），所以导出。
  */
-async function listCourses({ token, userId, fetchImpl = fetch }) {
+export async function listCourses({ token, userId, fetchImpl = fetch }) {
   const body = await requestJson(
     `${API_ORIGIN}/ykt-site/site/list/student/current?userId=${encodeURIComponent(userId)}`
       + '&siteRoleCode=2&current=1&size=9999',

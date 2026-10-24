@@ -3,7 +3,8 @@ import { ApiError, readJson } from '../http.js'
 import { resolveResourceDownload } from '../services/resources.js'
 import { fetchTimetable } from '../services/timetable.js'
 import { fetchTimetableWeixin } from '../services/jwglweixin.js'
-import { getAssignmentDetail, listAssignmentsWithCourses } from '../services/assignments.js'
+import { getAssignmentDetail, listAssignmentsWithCourses, listCourses } from '../services/assignments.js'
+import { listCoursewareTree } from '../services/courseware.js'
 import { slideSessionExpiry } from './auth.js'
 
 /**
@@ -94,6 +95,37 @@ export function createApiRoutes({ getSessionStore }) {
 
     const detail = await getAssignmentDetail({ token: session.accessToken, assignmentId })
     return c.json({ success: true, data: detail })
+  })
+
+  /** 课件视图的课程下拉。作业回填用的是同一服务函数，形状 [{ id, name }]。 */
+  routes.post('/ucloud/courses', async (c) => {
+    const { sessionId } = await readJson(c.req.raw)
+
+    const session = await getSessionStore().get(sessionId)
+    if (!session || session.kind !== 'ucloud') {
+      throw new ApiError(401, { stage: 'ucloud-auth', msg: '云邮登录已过期，请重新登录' })
+    }
+
+    const courses = await listCourses({ token: session.accessToken, userId: session.userId })
+    return c.json({ success: true, data: { courses } })
+  })
+
+  /** 一门课的课件资料树。userId 从会话取，不信任前端传的。 */
+  routes.post('/ucloud/courseware', async (c) => {
+    const { sessionId, siteId } = await readJson(c.req.raw)
+
+    const session = await getSessionStore().get(sessionId)
+    if (!session || session.kind !== 'ucloud') {
+      throw new ApiError(401, { stage: 'ucloud-auth', msg: '云邮登录已过期，请重新登录' })
+    }
+    if (!siteId) throw new ApiError(400, '缺少课程 ID')
+
+    const tree = await listCoursewareTree({
+      token: session.accessToken,
+      siteId,
+      userId: session.userId,
+    })
+    return c.json({ success: true, data: { tree } })
   })
 
   return routes
