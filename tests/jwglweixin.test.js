@@ -220,3 +220,28 @@ test('fetchTimetableWeixin：token 失效（500+JSON 或 code!=1 提示 token）
     (error) => error.status === 401 && error.stage === 'jwglweixin-auth',
   )
 })
+
+test('fetchTimetableWeixin：HTTP 200 + code:401「非法访问」也是 token 失效，报 401 不报 502', async (t) => {
+  // 真实过期 token 实测（2026-10-24）：HTTP 200 + {code:401, Msg:"非法访问：/student/curriculum"}。
+  // Msg 里没有 token/登录/认证关键词——只认关键词会错报 502「上游异常」
+  __clearSemesterCache()
+  t.mock.method(globalThis, 'fetch', async () => json({ code: 401, Msg: '非法访问：/student/curriculum' }))
+  await assert.rejects(
+    () => fetchTimetableWeixin({ token: 'expired' }),
+    (error) => error.status === 401 && error.stage === 'jwglweixin-auth',
+  )
+})
+
+test('buildWeekIndex：周次补齐到 topInfo.maxWeek（学期末），不只到课程并集', () => {
+  // 真实数据形状：data[0].topInfo[0] = { semesterId, week, today, weekday, maxWeek:"22" }，
+  // 而课程周次并集最大只到 3——期末的空周也必须在（周次下拉按序号走）
+  const withMaxWeek = {
+    code: 1,
+    data: [{ ...ALL_PAYLOAD.data[0], topInfo: [{ semesterId: '2026-2027-1', week: '2', maxWeek: '6' }] }],
+  }
+  const { weeks, weekNumbers } = buildWeekIndex(withMaxWeek, CURRENT_PAYLOAD)
+  assert.deepEqual(weekNumbers, [1, 2, 3, 4, 5, 6])
+  assert.equal(weeks.size, 6)
+  assert.deepEqual(weeks.get(6).courses, [], '学期末的空周也要有对象')
+  assert.deepEqual(weeks.get(6).weeks, [1, 2, 3, 4, 5, 6])
+})

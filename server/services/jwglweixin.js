@@ -208,6 +208,18 @@ export function inferTermStartDate(payload) {
   return null
 }
 
+/** 学期总周数：topInfo[0].maxWeek（真实数据 "22"，即教务认定的学期末）。
+ *  没有这个字段时回退 null，由调用方退回课程周次并集。 */
+export function inferMaxWeek(payload) {
+  const root = Array.isArray(payload?.data) ? payload.data[0] : null
+  const tops = Array.isArray(root?.topInfo) ? root.topInfo : []
+  for (const top of tops) {
+    const week = Number(top?.maxWeek)
+    if (Number.isInteger(week) && week >= 1 && week <= 60) return week
+  }
+  return null
+}
+
 /** 当前周号：date[] 里第一个 zc 可解析且非 all 的值，兜底 data[0].week。 */
 export function inferCurrentWeek(payload) {
   const root = Array.isArray(payload?.data) ? payload.data[0] : null
@@ -270,9 +282,12 @@ export function buildWeekIndex(allPayload, currentPayload) {
     }
   }
 
-  // 补齐连续区间：无课的周也要有对象（前端 weeks 下拉与周导航按序号走）
+  // 补齐连续区间直到学期末（topInfo.maxWeek，真实数据 22）：无课的周也要有
+  // 对象——只补到课程周次并集（18）的话，期末考试周会从周次下拉里消失
+  const maxWeek = inferMaxWeek(allPayload) ?? inferMaxWeek(currentPayload)
+  const lastWeek = Math.max(...weekSet, maxWeek ?? 0)
   const weekNumbers = []
-  for (let week = 1; week <= Math.max(...weekSet); week++) weekNumbers.push(week)
+  for (let week = 1; week <= lastWeek; week++) weekNumbers.push(week)
 
   const periods = SLOT_TIMES.map(([from, to], index) => ({ number: index + 1, time: `${from}~${to}` }))
   const weeks = new Map()
@@ -319,8 +334,12 @@ async function requestCurriculum(token, week, fetchImpl) {
     throw new ApiError(502, { stage: 'jwglweixin-timetable', msg: '连不上移动教务，请稍后重试' })
   }
 
-  // token 失效在移动教务侧表现为 HTTP 500 + JSON 或 code!=1（where_to_study 特判过）
-  if (response.status === 401 || (response.status >= 500 && payload) || (payload && !codeIsSuccess(payload) && /token|登录|认证/i.test(String(payload?.Msg || payload?.msg || '')))) {
+  // token 失效在移动教务侧表现为 HTTP 500 + JSON 或 code!=1（where_to_study 特判过）。
+  // 真实过期 token 实测（2026-10-24）：HTTP 200 + {code:401, Msg:"非法访问：/student/curriculum"}——
+  // code 本身就是 401，不能只认 Msg 关键词
+  if (response.status === 401
+    || (response.status >= 500 && payload)
+    || (payload && !codeIsSuccess(payload) && (Number(payload?.code) === 401 || /token|登录|认证|非法访问/i.test(String(payload?.Msg || payload?.msg || ''))))) {
     throw new ApiError(401, { stage: 'jwglweixin-auth', msg: '移动教务登录已过期，请重新登录' })
   }
   if (!payload || !codeIsSuccess(payload)) {
