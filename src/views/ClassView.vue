@@ -61,6 +61,9 @@ const addDeadline = ref('')
 const addBusy = ref(false)
 const addError = ref('')
 
+// 已有班级时的「加入 / 创建」折叠面板（空态时表单常驻展开，不走这里）
+const moreOpen = ref(false)
+
 async function submitAssignment() {
   if (addBusy.value || !classesStore.selectedId.value) return
   addBusy.value = true
@@ -84,10 +87,33 @@ async function submitAssignment() {
   }
 }
 
-// ── 删除 / 复制班级号 ───────────────────────────────────────────────────────
+// ── 删除 / 解散 / 复制班级号 ────────────────────────────────────────────────
 const deleting = ref('')
 const deleteError = ref('')
 const copied = ref(false)
+
+// 解散是高危操作：点一次进入确认态（按钮变「确认解散？」），4 秒内再点才执行
+const dissolveArm = ref(false)
+let dissolveTimer = null
+
+async function dissolveSelected() {
+  const classId = classesStore.selectedId.value
+  if (!classId) return
+  if (!dissolveArm.value) {
+    dissolveArm.value = true
+    clearTimeout(dissolveTimer)
+    dissolveTimer = setTimeout(() => { dissolveArm.value = false }, 4000)
+    return
+  }
+  dissolveArm.value = false
+  clearTimeout(dissolveTimer)
+  deleteError.value = ''
+  try {
+    await classesStore.dissolve(classId)
+  } catch (caught) {
+    deleteError.value = caught.message || '解散失败，请稍后重试'
+  }
+}
 
 async function removeAssignment(assignment) {
   if (!classesStore.selectedId.value || deleting.value) return
@@ -227,8 +253,58 @@ watch(() => auth.ucloudReady.value, startLoad)
             <span v-if="copied" class="copied">已复制</span>
           </button>
           <span class="member-count">{{ classesStore.selectedClass.value.memberCount }} 人</span>
+          <button
+            v-if="classesStore.selectedClass.value.createdBy === auth.username.value"
+            class="dissolve-button"
+            :class="{ 'dissolve-arm': dissolveArm }"
+            type="button"
+            @click="dissolveSelected"
+          >{{ dissolveArm ? '确认解散？点两次生效' : '解散班级' }}</button>
         </div>
       </div>
+      <p v-if="deleteError" class="form-error">{{ deleteError }}</p>
+
+      <!-- 加入一个班之后还可以继续加入/创建：折叠面板常驻 -->
+      <div class="entry">
+        <button class="entry-toggle" type="button" @click="moreOpen = !moreOpen">
+          {{ moreOpen ? '收起' : '加入或创建班级' }}
+        </button>
+        <template v-if="moreOpen">
+          <form class="entry-form" @submit.prevent="submitJoin">
+            <p class="form-head">凭班级号加入</p>
+            <div class="form-grid">
+              <label class="field">
+                <span>班级号（8 位）</span>
+                <input v-model="joinCode" type="text" placeholder="如 7XA4K2M9" maxlength="8" autocomplete="off" required />
+              </label>
+              <label class="field">
+                <span>班级密码</span>
+                <input v-model="joinPassword" type="password" autocomplete="current-password" required />
+              </label>
+            </div>
+            <button class="button-primary" type="submit" :disabled="formBusy || !joinCode || !joinPassword">
+              {{ formBusy ? '加入中…' : '加入班级' }}
+            </button>
+          </form>
+          <form class="entry-form" @submit.prevent="submitCreate">
+            <p class="form-head">创建新班级</p>
+            <div class="form-grid">
+              <label class="field">
+                <span>班级名称</span>
+                <input v-model="createName" type="text" placeholder="如：软件 2301 班" maxlength="40" required />
+              </label>
+              <label class="field">
+                <span>班级密码（4-32 位）</span>
+                <input v-model="createPassword" type="password" placeholder="同学加入时要填" autocomplete="new-password" required />
+              </label>
+            </div>
+            <button class="button-primary" type="submit" :disabled="formBusy || !createName || !createPassword">
+              {{ formBusy ? '创建中…' : '创建班级' }}
+            </button>
+          </form>
+        </template>
+      </div>
+      <p v-if="formError" class="form-error">{{ formError }}</p>
 
       <div class="entry">
         <button class="entry-toggle" type="button" @click="addOpen = !addOpen">
@@ -499,6 +575,47 @@ h3 {
   gap: 0.75rem;
   font-size: 0.8125rem;
   color: var(--muted);
+}
+
+.member-count {
+  margin-right: auto;
+}
+
+/* 解散：平时弱化展示；确认态转红提示危险 */
+.dissolve-button {
+  min-height: var(--touch);
+  padding: 0 0.6rem;
+  border: none;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+.dissolve-button.dissolve-arm {
+  color: var(--error);
+  font-weight: 500;
+}
+
+/* 折叠面板里双表单并排（窄屏自动落成单列） */
+.form-head {
+  margin: 0;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--ink);
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.625rem;
+}
+
+@media (max-width: 30rem) {
+  .form-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .code-chip {

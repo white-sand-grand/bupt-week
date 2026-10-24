@@ -1648,8 +1648,9 @@ test('班级：创建班级 → 录入作业 → 班级列表与作业 tab 合�
     await page.waitForSelector('.view .class-card')
     assert.match(await page.textContent('.view .class-card'), new RegExp(created.code))
 
-    // 录入作业（标题/科目/内容必填，截止 datetime-local）
-    await page.click('.view .entry-toggle')
+    // 录入作业（标题/科目/内容必填，截止 datetime-local）。
+    // 视图里还有「加入或创建班级」折叠入口，必须按文案精确匹配。
+    await page.click('.view .entry-toggle:has-text("录入作业")')
     await page.fill('.view .entry-form input[maxlength="100"]', '第三章课后习题')
     await page.fill('.view .entry-form input[maxlength="40"]', '高等数学')
     await page.fill('.view .entry-form textarea', '完成教材 P55 1-10 题')
@@ -1657,13 +1658,110 @@ test('班级：创建班级 → 录入作业 → 班级列表与作业 tab 合�
     await page.click('.view .entry-form button[type="submit"]')
     await page.waitForSelector('.view .assignment-card')
 
-    // 作业 tab：班级分组追加在云邮分组之后（云邮为空时就是第一组）
+    // 作业 tab：班级作业按科目分组（组标题=科目），卡片带来源班级 chip
     await page.click('.tabs button:nth-child(2)')
-    await page.waitForFunction(() => document.querySelector('.view .course-group'))
-    assert.match(await page.textContent('.view .course-group h3'), /软件 2301 班/)
+    await page.waitForSelector('.view .course-group')
+    assert.match(await page.textContent('.view .course-group h3'), /高等数学/)
     const groupText = await page.textContent('.view .course-group')
     assert.match(groupText, /第三章课后习题/)
-    assert.match(groupText, /高等数学/, '科目显示在卡片里')
+    assert.match(groupText, /软件 2301 班/, '来源班级 chip')
+  } finally {
+    await page.close()
+  }
+})
+
+test('班级：可继续加入第二个班、作业按科目分组呈现、创建者可解散班级', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.route('**/api/auth/login', (route) => fulfill(route, LOGIN_OK))
+    await page.route('**/api/ucloud/session', (route) => fulfill(route, UCLOUD_SESSION))
+    await page.route('**/api/ucloud/assignments', (route) =>
+      fulfill(route, { success: true, data: { assignments: [] } }))
+
+    const classes = [
+      { classId: 'cls-1', code: '7XA4K2M9', name: '软件 2301 班', createdBy: '2021001234', memberCount: 2, createdAt: Date.now() },
+    ]
+    const assignments = {
+      'cls-1': [
+        { id: 'ca-1', title: '第三章习题', subject: '高等数学', content: 'P55 1-10 题', deadline: '2026-11-01 23:59', createdBy: '2021001234' },
+        { id: 'ca-2', title: '实验二', subject: '数据结构', content: '链表实现', deadline: '', createdBy: '2021567890' },
+      ],
+    }
+    page.route('**/api/classes/list', (route) => fulfill(route, { success: true, data: { classes } }))
+    page.route('**/api/classes/assignments', (route) => {
+      const body = route.request().postDataJSON() || {}
+      const items = assignments[body.classId] || []
+      const cls = classes.find((item) => item.classId === body.classId)
+      return fulfill(route, {
+        success: true,
+        data: {
+          assignments: items.map((item) => ({
+            id: item.id,
+            assignmentTitle: item.title,
+            chapterName: item.subject,
+            siteId: `class:${body.classId}`,
+            siteName: cls?.name || '',
+            assignmentEndTime: item.deadline || '',
+            assignmentStatus: 99,
+            content: item.content,
+            createdBy: item.createdBy,
+          })),
+        },
+      })
+    })
+    page.route('**/api/classes/join', (route) => {
+      const body = route.request().postDataJSON() || {}
+      assert.equal(body.code, 'Q2W3E4R5')
+      classes.push({ classId: 'cls-2', code: body.code, name: '物联网 2301 班', createdBy: '2021999888', memberCount: 5, createdAt: Date.now() })
+      assignments['cls-2'] = []
+      return fulfill(route, { success: true, data: { classId: 'cls-2', name: '物联网 2301 班' } })
+    })
+    page.route('**/api/classes/dissolve', (route) => {
+      const body = route.request().postDataJSON() || {}
+      const index = classes.findIndex((item) => item.classId === body.classId)
+      assert.ok(index >= 0, '解散的班级应存在')
+      classes.splice(index, 1)
+      return fulfill(route, { success: true, data: {} })
+    })
+
+    await page.goto(APP_ORIGIN, { waitUntil: 'networkidle' })
+    await page.fill(`${panel} input[type="text"]`, '2021001234')
+    await page.fill(`${panel} input[type="password"]`, 'pw')
+    await page.click(`${panel} button[type="submit"]`)
+    await page.waitForFunction(() => document.querySelectorAll('.panel').length === 0)
+
+    // 已有一个班时，「加入或创建班级」入口仍在——可以继续加入
+    await page.click('.tabs button:nth-child(3)')
+    await page.waitForSelector('.view .class-card')
+    await page.click('.view .entry-toggle:has-text("加入或创建班级")')
+
+    const joinForm = page.locator('.view .entry-form').first()
+    await joinForm.locator('input[maxlength="8"]').fill('Q2W3E4R5')
+    await joinForm.locator('input[type="password"]').fill('join-pw')
+    await joinForm.locator('button[type="submit"]').click()
+
+    // 加入成功：出现班级切换器（两个班）
+    await page.waitForSelector('.view .class-picker select')
+
+    // 作业 tab：班级作业按科目分组（高等数学 / 数据结构两组），卡片带来源班级 chip
+    await page.click('.tabs button:nth-child(2)')
+    await page.waitForSelector('.view .course-group')
+    const groupTitles = await page.locator('.view .course-group h3').allTextContents()
+    assert.ok(groupTitles.some((title) => title.includes('高等数学')), groupTitles.join(' | '))
+    assert.ok(groupTitles.some((title) => title.includes('数据结构')), groupTitles.join(' | '))
+    assert.match(await page.textContent('.view .class-source'), /软件 2301 班/)
+
+    // 解散：两步确认后当前班消失。剩下一个班（别人创建的）——切换器消失、
+    // 且没有解散按钮（解散是创建者专属，非创建班看不到）
+    await page.click('.tabs button:nth-child(3)')
+    await page.waitForSelector('.view .dissolve-button')
+    await page.click('.view .dissolve-button')
+    assert.match(await page.textContent('.view .dissolve-button'), /确认解散/)
+    await page.click('.view .dissolve-button')
+
+    await page.waitForFunction(() => document.querySelector('.view .class-card')?.textContent.includes('物联网 2301 班'))
+    assert.equal(await page.locator('.view .class-picker').count(), 0, '只剩一个班，不需要切换器')
+    assert.equal(await page.locator('.view .dissolve-button').count(), 0, '非创建者看不到解散按钮')
   } finally {
     await page.close()
   }

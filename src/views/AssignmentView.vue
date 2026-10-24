@@ -74,6 +74,11 @@ let progressClock = null
  *  也不重置。 */
 const anchoredNow = Date.now()
 
+/** 班级手动录入的作业（siteId 形如 class:{id}）：卡片上标注来源班级。 */
+function isClassAssignment(assignment) {
+  return typeof assignment.courseId === 'string' && assignment.courseId.startsWith('class:')
+}
+
 /** 未提交的作业才有进度可言；已提交的返回 null（不画条）。 */
 function progressOf(assignment) {
   if (assignment.isCompleted) return null
@@ -138,7 +143,7 @@ const groups = computed(() => assignmentsStore.groups.value)
     <p v-else-if="!groups.length" class="empty">本学期没有作业记录。</p>
 
     <template v-else>
-      <section v-for="group in groups" :key="group.courseName" class="course-group">
+      <section v-for="group in groups" :key="group.key || group.courseName" class="course-group">
         <h3>{{ group.courseName }}<span class="course-count">{{ group.items.length }} 项</span></h3>
 
         <article
@@ -159,7 +164,9 @@ const groups = computed(() => assignmentsStore.groups.value)
                 <path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
               </svg>
             </span>
-            <span v-if="assignment.chapter" class="card-chapter">{{ assignment.chapter }}</span>
+            <span v-if="assignment.chapter || isClassAssignment(assignment)" class="card-chapter">
+              {{ assignment.chapter }}<span v-if="isClassAssignment(assignment)" class="class-source">{{ assignment.courseName }}</span>
+            </span>
             <span class="card-meta">
               <span class="badge" :class="LEVEL_CLASS[assignment.level]">{{ assignment.status }}</span>
               <span v-if="deadlineLabel(assignment)" class="deadline">{{ deadlineLabel(assignment) }}</span>
@@ -473,6 +480,24 @@ h3 {
 .card-chapter {
   font-size: 0.75rem;
   color: var(--muted);
+}
+
+/* 班级作业的来源班级 chip：作业栏按科目分组后，靠它区分来自哪个班 */
+.class-source {
+  margin-left: 0.375rem;
+  padding: 0.05rem 0.45rem;
+  border-radius: var(--radius-pill);
+  font-size: 0.6875rem;
+  color: var(--brand-700);
+  background: var(--brand-050);
+  border: 1px solid var(--brand-100);
+  vertical-align: 1px;
+}
+
+@media (prefers-color-scheme: dark) {
+  .class-source {
+    color: var(--brand-600);
+  }
 }
 
 .card-meta {

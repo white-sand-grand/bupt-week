@@ -25,3 +25,7 @@ export function addClassAssignment(sessionId, classId, payload) {
 export function deleteClassAssignment(sessionId, classId, assignmentId) {
   return api('/api/classes/assignment/delete', { method: 'POST', body: { sessionId, classId, assignmentId } })
 }
+
+export function dissolveClass(sessionId, classId) {
+  return api('/api/classes/dissolve', { method: 'POST', body: { sessionId, classId } })
+}

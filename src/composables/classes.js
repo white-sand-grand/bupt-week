@@ -4,6 +4,7 @@ import {
   addClassAssignment,
   createClass,
   deleteClassAssignment,
+  dissolveClass,
   fetchClassAssignments,
   joinClass,
   listMyClasses,
@@ -32,15 +33,30 @@ const assignments = computed(() => {
   return all
 })
 
-/** 作业 tab 追加在云邮分组之后的班级分组（每班一组，标题=班级名）。 */
-const classGroups = computed(() =>
-  classes.value
-    .map((cls) => ({
-      courseName: cls.name,
-      items: sortAssignments(assignmentsByClass.value[cls.classId] ?? []),
-    }))
-    .filter((group) => group.items.length > 0),
-)
+/** 作业 tab 追加在云邮分组之后的班级分组：**按科目拆分**（与云邮的课程分组
+ *  同构），标题=科目名；班级名在卡片上的来源 chip 里体现。key 保证跨班唯一。 */
+const classGroups = computed(() => {
+  const groups = []
+  for (const cls of classes.value) {
+    const items = sortAssignments(assignmentsByClass.value[cls.classId] ?? [])
+    const bySubject = new Map()
+    for (const item of items) {
+      const subject = item.chapter || '未分科目'
+      if (!bySubject.has(subject)) bySubject.set(subject, [])
+      bySubject.get(subject).push(item)
+    }
+    for (const [subject, subjectItems] of bySubject) {
+      groups.push({
+        key: `class:${cls.classId}:${subject}`,
+        courseName: subject,
+        classId: cls.classId,
+        className: cls.name,
+        items: subjectItems,
+      })
+    }
+  }
+  return groups
+})
 
 async function load() {
   if (!auth.ucloudReady.value) return
@@ -98,6 +114,12 @@ async function removeAssignment(classId, assignmentId) {
   await load()
 }
 
+/** 解散班级（仅创建者）：成功后重拉，列表里就没了。 */
+async function dissolve(classId) {
+  await dissolveClass(auth.sessionIdFor('ucloud'), classId)
+  await load()
+}
+
 function select(classId) {
   selectedId.value = classId
 }
@@ -136,6 +158,7 @@ export const classesStore = {
   join,
   addAssignment,
   removeAssignment,
+  dissolve,
   select,
   canDelete,
   reset,

@@ -301,5 +301,34 @@ export function createClassesRoutes({ getSessionStore, getClassStore }) {
     return c.json({ success: true, data: {} })
   })
 
+  routes.post('/classes/dissolve', async (c) => {
+    const { sessionId, classId } = await readJson(c.req.raw)
+    const session = await requireUcloudSession(getSessionStore(), sessionId)
+    const classStore = getClassStore()
+    const record = await loadClass(classStore, classId)
+
+    // 解散是创建者的权限：成员不能拆全班的共享数据
+    if (record.createdBy !== session.username) {
+      throw new ApiError(403, { stage: 'class-member', msg: '只有班级创建者可以解散班级' })
+    }
+
+    // 逐个剪除成员的「我的班级」索引（含创建者自己），再删班级本体各键。
+    // 单班数据量小（≤100 人），逐键处理足够；不是原子事务，中断会留下孤儿
+    // 索引——myClassIds 读取时本就会剔掉指向已删班级的条目，可自愈。
+    const members = await loadMembers(classStore, classId)
+    for (const username of members) {
+      const mine = await myClassIds(classStore, username)
+      const rest = mine.filter((id) => id !== classId)
+      if (rest.length) await writeJson(classStore, `user:${username}:classes`, { ids: rest })
+      else await classStore.delete(`user:${username}:classes`)
+    }
+    await classStore.delete(`class:${classId}:assigns`)
+    await classStore.delete(`class:${classId}:members`)
+    await classStore.delete(`code:${record.code}`)
+    await classStore.delete(`class:${classId}`)
+
+    return c.json({ success: true, data: {} })
+  })
+
   return routes
 }

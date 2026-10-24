@@ -194,15 +194,17 @@ export function sortAssignments(assignments) {
   })
 }
 
-/** 按课程分组（保持传入顺序），组内保持给定排序。 */
+/** 按课程分组（保持传入顺序），组内保持给定排序。
+ *  key 供渲染层作 v-for 键：云邮组用课程 id，班级组（按科目拆分）自行带 key。 */
 export function groupByCourse(assignments) {
   const groups = []
   const index = new Map()
   for (const assignment of assignments) {
     const key = assignment.courseId || assignment.courseName
     if (!index.has(key)) {
-      index.set(key, { courseName: assignment.courseName, items: [] })
-      groups.push(index.get(key))
+      const group = { key, courseName: assignment.courseName, items: [] }
+      index.set(key, group)
+      groups.push(group)
     }
     index.get(key).items.push(assignment)
   }

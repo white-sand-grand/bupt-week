@@ -247,3 +247,53 @@ test('privacy：create/join/作业响应里绝不出现班级密码明文', asyn
     assert.equal(text.includes('super-secret-pw'), false, `${path} 泄露了班级密码`)
   }
 })
+
+// ── 多班与解散 ───────────────────────────────────────────────────────────────
+
+test('join：加入一个班后还能继续加入别的班（用户索引累积）', async () => {
+  const { app, sessionStore, classStore, seedClass } = makeApp()
+  const a = await seedClass({ name: '班级 A' })
+  const b = await seedClass({ name: '班级 B' })
+  const joiner = await seedUcloud(sessionStore, 'uc2', '2021567890')
+
+  await post(app, '/api/classes/join', { sessionId: joiner, code: a.code, password: 'class-pw' })
+  await post(app, '/api/classes/join', { sessionId: joiner, code: b.code, password: 'class-pw' })
+
+  const mine = (await classStore.get('user:2021567890:classes')).ids
+  assert.equal(mine.length, 2, '两个班都应在「我的班级」里')
+  const list = await (await post(app, '/api/classes/list', { sessionId: joiner })).json()
+  assert.equal(list.data.classes.length, 2)
+})
+
+test('dissolve：创建者解散班级——所有键清理、成员索引剪除；非创建者 403', async () => {
+  const { app, sessionStore, classStore, seedClass } = makeApp()
+  const created = await seedClass()
+  await seedUcloud(sessionStore, 'uc2', '2021567890')
+  await post(app, '/api/classes/join', { sessionId: 'uc2', code: created.code, password: 'class-pw' })
+  await post(app, '/api/classes/assignment/add', {
+    sessionId: 'uc', classId: created.classId, title: 't', subject: 's', content: 'c',
+  })
+
+  const forbidden = await post(app, '/api/classes/dissolve', { sessionId: 'uc2', classId: created.classId })
+  assert.equal(forbidden.status, 403, '成员不能解散班级')
+
+  const ok = await post(app, '/api/classes/dissolve', { sessionId: 'uc', classId: created.classId })
+  assert.equal((await ok.json()).success, true)
+
+  for (const key of [
+    `class:${created.classId}`,
+    `class:${created.classId}:members`,
+    `class:${created.classId}:assigns`,
+    `code:${created.code}`,
+  ]) {
+    assert.equal(await classStore.get(key), undefined, `${key} 应被删除`)
+  }
+  const creatorIndex = await classStore.get('user:2021001234:classes')
+  assert.equal(creatorIndex, undefined, '创建者索引清空后删除')
+  const memberIndex = await classStore.get('user:2021567890:classes')
+  assert.deepEqual(memberIndex?.ids ?? [], [], '成员索引应剪除')
+
+  // 解散后班级号可以复用（code 索引已删）：同班号能再建
+  const recreated = await seedClass({ name: '重建的班' })
+  assert.ok(recreated.code, '解散后可正常再建班')
+})
