@@ -87,6 +87,25 @@ function pickCasError(html) {
 }
 
 /**
+ * CAS 认证失败原因的原文是人写的英文（页面语言跟 CAS 部署走），直接透传到
+ * 全中文界面里很突兀，学生也未必看得懂（实测「Invalid credentials.」）。
+ * 认识的翻成人话；不认识的原样透传——CAS 侧也可能直接给中文消息。
+ */
+const CAS_MSG_MAP = [
+  [/^invalid credentials\.?$/i, '学号或密码错误，请重新输入'],
+]
+
+function translateCasError(casMsg) {
+  if (!casMsg) return ''
+  // HTML 提取出的消息可能带连续空白，匹配前归一；透传仍用原文
+  const normalized = casMsg.replace(/\s+/g, ' ').trim()
+  const hit = CAS_MSG_MAP.find(([pattern]) => pattern.test(normalized))
+  if (!hit) return casMsg
+  console.warn(`[cas] CAS 失败消息已翻译：原文「${casMsg}」`)
+  return hit[1]
+}
+
+/**
  * 用学号密码走完 CAS，返回 SSO Cookie 和一次性 ticket。
  *
  * 这是两个系统共用的认证入口：jwgl.bupt.edu.cn 和 ucloud.bupt.edu.cn 都是
@@ -182,9 +201,10 @@ export async function casAuthenticate({ username = '', password = '', service, f
 
   if (!ticket) {
     const errorHtml = location ? '' : await casResponse.text()
+    const casMsg = pickCasError(errorHtml)
     throw new ApiError(401, {
       stage: 'cas-login',
-      msg: pickCasError(errorHtml) || '统一认证没有返回票据，请检查学号和密码',
+      msg: translateCasError(casMsg) || '统一认证没有返回票据，请检查学号和密码',
     })
   }
 

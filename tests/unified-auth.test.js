@@ -28,7 +28,7 @@ function post(app, path, body) {
  * 造假 fetch，按 URL 特征分流响应，并把每次调用记下来。
  * 这样能同时验证"云邮走了一次 CAS"和"教务处走了第二次 CAS"。
  */
-function fakeUpstream({ jwglViaCas = true, log = [] } = {}) {
+function fakeUpstream({ jwglViaCas = true, jwglUnreachable = false, log = [] } = {}) {
   return async (url, options = {}) => {
     const target = String(url)
     log.push({ url: target, options })
@@ -54,6 +54,10 @@ function fakeUpstream({ jwglViaCas = true, log = [] } = {}) {
 
     // 教务处：CAS ticket 入口，或老的 encodeInp 登录
     if (target.includes('jwgl.bupt.edu.cn')) {
+      // 校外环境：域名只在校园网 DNS 存在，连接层直接失败（实测 NXDOMAIN）
+      if (jwglUnreachable) {
+        throw new Error('fetch failed')
+      }
       if (target.includes('?ticket=')) {
         if (!jwglViaCas) {
           return new Response('<html><title>登录</title><form id="userAccount"></form></html>')
@@ -206,6 +210,35 @@ test('POST /api/auth/login：教务处 CAS 走不通时回退到原登录，整�
   // 老登录的 Cookie 也进了会话
   const jwglSession = await store.get(body.data.jwgl.sessionId)
   assert.ok(jwglSession.cookies.includes('JSESSIONID='))
+})
+
+test('POST /api/auth/login：教务系统不可达时降级为仅云邮登录，作业功能不陪葬', async (t) => {
+  const { app, store } = makeApp()
+  const log = []
+  t.mock.method(globalThis, 'fetch', fakeUpstream({ jwglUnreachable: true, log }))
+
+  const response = await post(app, '/api/auth/login', { username: 'u', password: 'p' })
+  const body = await response.json()
+
+  // 云邮侧是真实凭证校验，已经成功——不能因为教务连不上把人挡在门外
+  // （2026-10-24 校外实测：三次登录云邮全通、教务 NXDOMAIN，整体 502）
+  assert.equal(response.status, 200)
+  assert.equal(body.success, true)
+  assert.match(body.data.ucloud.sessionId, /^[0-9a-f-]{36}$/)
+  assert.equal(body.data.ucloud.realName, '张三')
+
+  assert.equal(body.data.jwgl, null, '教务侧应以 null 标记不可用')
+  assert.equal(body.data.jwglVia, 'unavailable')
+  assert.match(body.data.jwglMessage, /校园网/)
+
+  // store 里只有云邮一条会话，没有半套教务会话
+  assert.equal(store.size, 1)
+  const ucloudSession = await store.get(body.data.ucloud.sessionId)
+  assert.equal(ucloudSession.kind, 'ucloud')
+
+  // 确实两条教务路径都试过了（CAS → 回退 legacy），不是跳过了教务
+  assert.ok(log.some((call) => call.url.includes('jwgl.bupt.edu.cn/?ticket=')))
+  assert.ok(log.some((call) => call.url.includes('jwgl.bupt.edu.cn/jsxsd/')))
 })
 
 test('POST /api/auth/login：云邮失败时整体失败，不留下半套登录', async (t) => {

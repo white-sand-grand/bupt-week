@@ -70,8 +70,17 @@ async function loginBothSystems({ username, password, fetchImpl = fetch }) {
   const ucloud = await loginUcloudWithTicket(ucloudCas.ticket, { username, fetchImpl })
 
   // 第二次：教务处。复用同一个 Cookie 罐，不重新认证。
+  //
+  // 教务系统的域名只在校内 DNS 存在（校外实测 NXDOMAIN），校外统一登录必然
+  // 走到这里失败。云邮那侧已经真实验证过学号密码、会话已到手——再因为教务
+  // 连不上把整体登录拒掉，等于把 100% 可用的作业功能也关在门外（2026-10-24
+  // 校外实测踩过）。所以 jwgl-connect（连不上，网络/环境类失败）降级：云邮
+  // 照常登录，教务侧返回 null 由前端呈现「仅校园网可用」。
+  // 其他 stage（jwgl-login 401、jwgl-verify 等）是教务侧自身异常，继续整体
+  // 失败，不静默吞掉。
   let jwgl
   let jwglVia = 'cas'
+  let jwglMessage = ''
   try {
     const jwglCas = await casAuthenticate({
       username,
@@ -83,10 +92,18 @@ async function loginBothSystems({ username, password, fetchImpl = fetch }) {
   } catch (error) {
     console.warn(`[auth] 教务处 CAS 登录失败（${error.stage || 'unknown'}: ${error.message}），回退到原登录方式`)
     jwglVia = 'legacy'
-    jwgl = await loginJwgl({ username, password, fetchImpl })
+    try {
+      jwgl = await loginJwgl({ username, password, fetchImpl })
+    } catch (legacyError) {
+      if (legacyError.stage === 'jwgl-connect') {
+        console.warn('[auth] 教务系统不可达，降级为仅云邮登录')
+        return { ucloud, jwgl: null, jwglVia: 'unavailable', jwglMessage: legacyError.message }
+      }
+      throw legacyError
+    }
   }
 
-  return { ucloud, jwgl, jwglVia }
+  return { ucloud, jwgl, jwglVia, jwglMessage }
 }
 
 /**
@@ -117,31 +134,39 @@ export function createAuthRoutes({ getSessionStore, frontendUrl = '', allowedOri
 
   routes.post('/auth/login', limitLogin(async (c) => {
     const { username, password } = await readJson(c.req.raw)
-    const { ucloud, jwgl, jwglVia } = await loginBothSystems({ username, password })
+    const { ucloud, jwgl, jwglVia, jwglMessage } = await loginBothSystems({ username, password })
 
     const store = getSessionStore()
     const ucloudSessionId = newSessionId()
-    const jwglSessionId = newSessionId()
 
     await store.set(ucloudSessionId, {
       kind: 'ucloud',
       ...ucloud,
       expiresAt: expiresAt(),
     })
-    await store.set(jwglSessionId, {
-      kind: 'jwgl',
-      cookies: jwgl.cookies,
-      username,
-      expiresAt: expiresAt(),
-    })
+
+    // 教务侧降级（jwgl 为 null）时不建会话：store 里只有云邮一条，
+    // 前端按 data.jwgl === null 呈现「仅云邮可用」。
+    let jwglSessionId = null
+    if (jwgl) {
+      jwglSessionId = newSessionId()
+      await store.set(jwglSessionId, {
+        kind: 'jwgl',
+        cookies: jwgl.cookies,
+        username,
+        expiresAt: expiresAt(),
+      })
+    }
 
     return c.json({
       success: true,
       data: {
         ucloud: { sessionId: ucloudSessionId, username: ucloud.username, realName: ucloud.realName },
-        jwgl: { sessionId: jwglSessionId, username },
-        // 方便排查：教务处这次是走 CAS 还是回退到了老登录
+        // 教务侧降级时为 null（jwglMessage 说明原因），前端据此呈现「仅云邮可用」
+        jwgl: jwgl ? { sessionId: jwglSessionId, username } : null,
+        // 方便排查：教务处这次是走 CAS、回退到了老登录、还是压根不可达
         jwglVia,
+        ...(jwglMessage ? { jwglMessage } : {}),
         expiresAt: expiresAt(),
       },
     })

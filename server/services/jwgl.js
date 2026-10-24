@@ -4,6 +4,16 @@ import { mergeCookies } from './cas.js'
 const JWGL_BASE = 'https://jwgl.bupt.edu.cn'
 
 /**
+ * jwgl-connect（连不上教务系统）的统一文案。
+ *
+ * 「请检查网络」会误导校外学生——他们的网络没问题，是教务系统的域名只在
+ * 校园网 DNS 里存在（校外实测 NXDOMAIN，开普通代理 VPN 也没用）。把场景
+ * 说清楚，并点明作业走云邮、不受影响（配合登录路由的降级逻辑）。
+ */
+export const JWGL_UNREACHABLE_MSG =
+  '暂时连不上教务系统。教务系统一般仅限校园网内访问（校外可用学校 VPN），也可能正在临时维护；作业功能不受影响。'
+
+/**
  * 教务处登录的密码编码，从 MYUCLOUD 的 Python 版 auto_evalued 原样移植（逐字一致）。
  *
  * 实测结论：这就是一个手写的**标准 base64**。65 个字符的 key 只是为了把下标 64
@@ -103,7 +113,7 @@ export async function loginJwgl({ username = '', password = '', fetchImpl = fetc
     })
     cookies = parseSetCookies(first)
   } catch {
-    throw new ApiError(502, { stage: 'jwgl-connect', msg: '连不上教务系统，请检查网络' })
+    throw new ApiError(502, { stage: 'jwgl-connect', msg: JWGL_UNREACHABLE_MSG })
   }
 
   // 2. 提交。密码字段留空，真密码在 encoded 里
@@ -216,7 +226,7 @@ export async function loginJwglWithTicket(ticket, fetchImpl = fetch) {
       redirect: 'manual',
     })
   } catch {
-    throw new ApiError(502, { stage: 'jwgl-connect', msg: '连不上教务系统，请检查网络' })
+    throw new ApiError(502, { stage: 'jwgl-connect', msg: JWGL_UNREACHABLE_MSG })
   }
 
   let cookies = parseSetCookies(first)

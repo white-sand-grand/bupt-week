@@ -101,7 +101,7 @@ test('casAuthenticate：连不上时报 cas-connect 且提示代理', async () =
   )
 })
 
-test('casAuthenticate：凭证错误时报 cas-login 并带上 CAS 的原文', async () => {
+test('casAuthenticate：CAS 的英文失败消息映射成人话（2026-10-24 校外实测）', async () => {
   const { fetchImpl } = scriptedFetch([
     new Response(CAS_PAGE, { headers: { 'set-cookie': 'a=1' } }),
     new Response('<html><body><p>Invalid credentials.</p></body></html>'),
@@ -111,7 +111,33 @@ test('casAuthenticate：凭证错误时报 cas-login 并带上 CAS 的原文', a
     (error) => {
       assert.equal(error.status, 401)
       assert.equal(error.stage, 'cas-login')
-      assert.match(error.message, /Invalid credentials\./)
+      assert.match(error.message, /学号或密码错误/)
+      return true
+    },
+  )
+})
+
+test('casAuthenticate：认识的消息带空白/大小写变体也能映射', async () => {
+  const { fetchImpl } = scriptedFetch([
+    new Response(CAS_PAGE, { headers: { 'set-cookie': 'a=1' } }),
+    new Response('<html><body><p>  Invalid  Credentials </p></body></html>'),
+  ])
+  await assert.rejects(
+    () => casAuthenticate({ username: 'u', password: 'bad', service: 'https://x', fetchImpl }),
+    (error) => /学号或密码错误/.test(error.message),
+  )
+})
+
+test('casAuthenticate：不认识的 CAS 消息原样透传（可能本来就是中文）', async () => {
+  const { fetchImpl } = scriptedFetch([
+    new Response(CAS_PAGE, { headers: { 'set-cookie': 'a=1' } }),
+    new Response('<html><body><p>账号已被冻结，请联系管理员</p></body></html>'),
+  ])
+  await assert.rejects(
+    () => casAuthenticate({ username: 'u', password: 'bad', service: 'https://x', fetchImpl }),
+    (error) => {
+      assert.equal(error.stage, 'cas-login')
+      assert.match(error.message, /账号已被冻结/)
       return true
     },
   )
