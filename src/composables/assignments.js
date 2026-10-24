@@ -2,6 +2,7 @@ import { computed, readonly, ref, watch } from 'vue'
 import { auth } from './auth.js'
 import { fetchAssignments, fetchAssignmentDetail } from '../api/assignments.js'
 import { normalizeAssignment, sortAssignments, groupByCourse, isCurrentTerm } from '../utils/deadline.js'
+import { classesStore } from './classes.js'
 import { readAssignmentsCache, writeAssignmentsCache } from '../utils/assignments-cache.js'
 import { friendlyError } from '../utils/errors.js'
 
@@ -32,7 +33,9 @@ let revision = 0
  *  解析不了截止时间的一律保留——映射失败不能误杀正常作业。 */
 const assignments = computed(() =>
   sortAssignments(raw.value.map((record) => normalizeAssignment(record))).filter(isCurrentTerm))
-const groups = computed(() => groupByCourse(assignments.value))
+
+/** 云邮分组在前，班级分组（手动录入的共享作业）追加在后。 */
+const groups = computed(() => [...groupByCourse(assignments.value), ...classesStore.classGroups.value])
 const unfinishedCount = computed(() => assignments.value.filter((item) => !item.isCompleted && item.level !== 'missed').length)
 
 /** 强制走网络刷新（重试按钮也走这里，所以不看 state 直接拉）。
@@ -65,7 +68,8 @@ async function refresh() {
   }
 }
 
-/** 进视图时调用：有缓存先亮，再刷新。已经在拉就别叠加请求。 */
+/** 进视图时调用：有缓存先亮，再刷新。已经在拉就别叠加请求。
+ *  班级作业顺带 ensureLoaded（不阻塞主列表——班级拉不到只影响追加的分组）。 */
 async function load() {
   if (!auth.ucloudReady.value) return
   if (state.value === 'loading') return
@@ -77,6 +81,7 @@ async function load() {
       state.value = 'done'
     }
   }
+  classesStore.ensureLoaded().catch(() => {})
   await refresh()
 }
 

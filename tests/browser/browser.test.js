@@ -1529,3 +1529,104 @@ test('部署形态下接口请求也打到后端域名', async () => {
     await page.close()
   }
 })
+
+// ── 班级 ────────────────────────────────────────────────────────────────────
+
+/** 班级接口的 mock：列表固定返回一个班，作业列表可动态追加。 */
+function mockClassesApi(page) {
+  const created = { classId: 'cls-1', code: '7XA4K2M9', name: '软件 2301 班' }
+  const assignments = []
+  let classExists = false
+  page.route('**/api/classes/create', (route) => {
+    const body = route.request().postDataJSON() || {}
+    assert.equal(body.sessionId, 'uc-sid')
+    assert.equal(body.password, 'class-pw')
+    classExists = true
+    return fulfill(route, { success: true, data: created })
+  })
+  page.route('**/api/classes/list', (route) =>
+    fulfill(route, {
+      success: true,
+      data: { classes: classExists
+        ? [{ ...created, createdBy: '2021001234', memberCount: 1, createdAt: Date.now() }]
+        : [] },
+    }))
+  page.route('**/api/classes/assignments', (route) =>
+    fulfill(route, {
+      success: true,
+      data: {
+        assignments: assignments.map((item) => ({
+          id: item.id,
+          assignmentTitle: item.title,
+          chapterName: item.subject,
+          siteId: 'class:cls-1',
+          siteName: created.name,
+          assignmentEndTime: item.deadline || '',
+          assignmentStatus: 99,
+          content: item.content,
+          createdBy: '2021001234',
+        })),
+      },
+    }))
+  page.route('**/api/classes/assignment/add', (route) => {
+    const body = route.request().postDataJSON() || {}
+    assert.equal(body.title, '第三章课后习题')
+    assert.equal(body.subject, '高等数学')
+    assert.ok(body.content.includes('P55'))
+    assert.equal(body.deadline, '2026-11-01T23:59', 'datetime-local 原样上送，归一在后端')
+    assignments.push({ id: 'ca-1', ...body })
+    return fulfill(route, { success: true, data: { assignmentId: 'ca-1' } })
+  })
+  return created
+}
+
+test('班级：创建班级 → 录入作业 → 班级列表与作业 tab 合并展示', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.route('**/api/auth/login', (route) => fulfill(route, LOGIN_OK))
+    await page.route('**/api/ucloud/session', (route) => fulfill(route, UCLOUD_SESSION))
+    await page.route('**/api/ucloud/assignments', (route) =>
+      fulfill(route, { success: true, data: { assignments: [] } }))
+    const created = mockClassesApi(page)
+
+    await page.goto(APP_ORIGIN, { waitUntil: 'networkidle' })
+    await page.fill(`${panel} input[type="text"]`, '2021001234')
+    await page.fill(`${panel} input[type="password"]`, 'pw')
+    await page.click(`${panel} button[type="submit"]`)
+    await page.waitForFunction(() => document.querySelectorAll('.panel').length === 0)
+
+    // 班级 tab：空态双入口 → 创建班级
+    await page.click('.tabs button:nth-child(3)')
+    assert.equal(await page.textContent('.view h2'), '班级')
+    await page.waitForSelector('.view .entry-toggle')
+    assert.match(await page.textContent('.view .empty'), /还没有加入任何班级/)
+
+    await page.click('.view .entry:nth-of-type(1) .entry-toggle')
+    await page.fill('.view .entry:nth-of-type(1) input[type="text"]', '软件 2301 班')
+    await page.fill('.view .entry:nth-of-type(1) input[type="password"]', 'class-pw')
+    await page.click('.view .entry:nth-of-type(1) button[type="submit"]')
+
+    // 创建成功：班级卡出现（mock 的 list 返回了这个班）
+    await page.waitForSelector('.view .class-card')
+    assert.match(await page.textContent('.view .class-card'), new RegExp(created.code))
+
+    // 录入作业（标题/科目/内容必填，截止 datetime-local）
+    await page.click('.view .entry-toggle')
+    await page.fill('.view .entry-form input[maxlength="100"]', '第三章课后习题')
+    await page.fill('.view .entry-form input[maxlength="40"]', '高等数学')
+    await page.fill('.view .entry-form textarea', '完成教材 P55 1-10 题')
+    await page.fill('.view .entry-form input[type="datetime-local"]', '2026-11-01T23:59')
+    await page.click('.view .entry-form button[type="submit"]')
+    await page.waitForSelector('.view .assignment-card')
+
+    // 作业 tab：班级分组追加在云邮分组之后（云邮为空时就是第一组）
+    await page.click('.tabs button:nth-child(2)')
+    await page.waitForFunction(() => document.querySelector('.view .course-group'))
+    assert.match(await page.textContent('.view .course-group h3'), /软件 2301 班/)
+    const groupText = await page.textContent('.view .course-group')
+    assert.match(groupText, /第三章课后习题/)
+    assert.match(groupText, /高等数学/, '科目显示在卡片里')
+  } finally {
+    await page.close()
+  }
+})

@@ -150,6 +150,9 @@ export function normalizeAssignment(record, now = Date.now()) {
     beginTime: text(safe.assignmentBeginTime),
     deadline: text(safe.assignmentEndTime),
     submitTime: text(safe.submitTime),
+    // 班级手动录入的作业专用：正文与录入者（云邮记录没有这两个字段，落 ''）
+    content: text(safe.content),
+    createdBy: text(safe.createdBy),
     daysLeft,
     level,
     isCompleted,
