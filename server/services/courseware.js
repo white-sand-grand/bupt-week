@@ -5,10 +5,10 @@ const BUSINESS_AUTH = 'Basic c3dvcmQ6c3dvcmRfc2VjcmV0'
 const TENANT_ID = '000000'
 
 /**
- * 课程资料树（课件）。接口形状参考 MYUCLOUD 源码（AuceptinFang/MYUCLOUD
- * src/api/ucloud.js getCourseResources），【待实测】标记见 docs/api-reference.md §2.10。
+ * 课程资料树（课件）。接口未经真实账号实测（【待实测】，见
+ * docs/api-reference.md §2.10），字段按防御式读取——上游可能存在别名。
  *
- * 树节点（字段名按 MYUCLOUD 的防御式读取，上游可能有别名）：
+ * 树节点：
  *   目录节点：id / resourceName / resourceTypeName / children / attachmentVOs
  *   附件 VO：type=2 是外部链接（siteResourceLink.{title,link}），否则
  *           resource.{id, name, ext, fileSizeUnit, url}——resource.id 就是

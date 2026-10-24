@@ -1,5 +1,5 @@
 /**
- * 课表按周缓存：从 MYUCLOUD src/utils/timetable.js 移植（键名换成自己的）。
+ * 课表按周缓存。
  *
  * 语义：每成功一周立刻落 localStorage；切周只读缓存；重新同步时未覆盖的
  * 周次保留旧数据。缓存按 username + mode（节次模式）+ 学期隔离——不同模式

@@ -3,8 +3,7 @@ import { ApiError } from '../http.js'
 /**
  * 移动教务（jwglweixin.bupt.edu.cn）—— 课表主数据源。
  *
- * 协议逐字对照 Nemoyuzx/where_to_study 的 src-tauri/src/{classrooms,schedule,config}.rs
- * （结论全文见 docs/jwglweixin-source.md）：
+ * 协议与行为均经真实上游实测验证（结论全文见 docs/jwglweixin-source.md）：
  * - 登录：POST /bjyddx/login，明文表单 userNo/pwd 换 token（不走 CAS）
  * - 课表：POST /bjyddx/student/curriculum?week=all，平铺课程实例（非周网格）
  * - 该域名公网可达（211.68.69.240），不依赖校园网——与校内-only 的
@@ -28,7 +27,7 @@ const HEADERS = {
 /** 与桌面教务一致的星期标签；date 由学期起点合成。 */
 const DAY_LABELS = ['星期一', '星期二', '星期三', '星期四', '星期五', '星期六', '星期日']
 
-/** where_to_study config.rs 的 SLOT_TIMES（14 节，逐字对照）。 */
+/** 移动教务默认作息表（14 节）。前端 src/utils/period-times.js 有同源拷贝，改一处必须同步另一处。 */
 const SLOT_TIMES = [
   ['08:00', '08:45'], ['08:50', '09:35'], ['09:50', '10:35'], ['10:40', '11:25'],
   ['11:30', '12:15'], ['13:00', '13:45'], ['13:50', '14:35'], ['14:45', '15:30'],
@@ -86,7 +85,7 @@ export async function loginJwglweixin({ username, password, fetchImpl = fetch })
   return { token, username }
 }
 
-// ── 解析器（对照 where_to_study schedule.rs 的 parse_sjd_* 系列） ──────────
+// ── 解析器 ─────────────────────────────────────────────────────────────────
 
 const MAX_NESTING_DEPTH = 64
 
@@ -107,8 +106,7 @@ export function collectCourseItems(node, out = [], depth = 0) {
 
 /**
  * classTime 数字编码 → 节次区间。编码形如 "1030405"：首字符是节数门数，
- * 之后每两位是一个 1-based 节次节点（where_to_study 的 parse_sjd_slots 语义，
- * 节点号即 1-based 节次）。识别不了回退 weekNoteDetail 里的数字。
+ * 之后每两位是一个 1-based 节次节点。识别不了回退 weekNoteDetail 里的数字。
  * @returns {{ start: number, end: number } | null}
  */
 export function parseClassTimeSlots(raw) {
@@ -124,7 +122,7 @@ export function parseClassTimeSlots(raw) {
 
 /**
  * 周次文本 → 周号数组。支持：区间（1-5）、单周（3）、全角逗号、「单/双」周
- * 过滤、[...] / (...) 注记剔除（where_to_study 的 expand_week_numbers 语义）。
+ * 过滤、[...] / (...) 注记剔除。
  */
 export function parseWeekNumbers(classWeek, classWeekDetails) {
   const expand = (text) => {
@@ -160,7 +158,7 @@ export function parseWeekNumbers(classWeek, classWeekDetails) {
   if (primary.length) return primary
   const secondary = expand(classWeekDetails)
   if (secondary.length) return secondary
-  // 最后兜底：把注记文本里的数字全捞出来（where_to_study 同款兜底）
+  // 最后兜底：把注记文本里的数字全捞出来
   const digits = typeof classWeekDetails === 'string'
     ? (classWeekDetails.match(/\d+/g) || []).map(Number).filter((week) => week >= 1 && week <= 60)
     : []
@@ -174,7 +172,7 @@ function parseWeekday(raw) {
   return Number.isInteger(day) && day >= 1 && day <= 7 ? day : null
 }
 
-/** 楼-房间合成地点：房间已含楼名时去重（where_to_study 的合成规则）。 */
+/** 楼-房间合成地点：房间名已包含楼名时去重，避免「教三-教三-101」式重复。 */
 function composeLocation(building, room) {
   const b = (building || '').trim()
   const r = (room || '').trim()
@@ -334,7 +332,7 @@ async function requestCurriculum(token, week, fetchImpl) {
     throw new ApiError(502, { stage: 'jwglweixin-timetable', msg: '连不上移动教务，请稍后重试' })
   }
 
-  // token 失效在移动教务侧表现为 HTTP 500 + JSON 或 code!=1（where_to_study 特判过）。
+  // token 失效在移动教务侧有多种表现（HTTP 500 + JSON、code!=1）。
   // 真实过期 token 实测（2026-10-24）：HTTP 200 + {code:401, Msg:"非法访问：/student/curriculum"}——
   // code 本身就是 401，不能只认 Msg 关键词
   if (response.status === 401

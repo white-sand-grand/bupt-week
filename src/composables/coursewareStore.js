@@ -18,7 +18,7 @@ const currentSiteId = ref('')
 const trees = ref({}) // siteId -> { state, rows, error }
 
 /** 拉平资料树：目录节点与它挂的附件各成一行，children 递归。
- *  字段名按 MYUCLOUD 的防御式读取（上游存在别名）。 */
+ *  字段名按防御式读取（上游存在别名）。 */
 function flattenTree(nodes, depth = 0, prefix = '') {
   if (!Array.isArray(nodes)) return []
   return nodes.flatMap((node, index) => {

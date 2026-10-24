@@ -13,9 +13,8 @@ import {
 } from '../server/services/jwglweixin.js'
 
 /**
- * 移动教务（jwglweixin）服务与解析器。协议逐字对照 where_to_study
- * （docs/jwglweixin-source.md），fail-loud 语义与桌面教务解析器一致：
- * 垃圾输入宁可抛错，不出半份错课表。
+ * 移动教务（jwglweixin）服务与解析器（协议结论见 docs/jwglweixin-source.md），
+ * fail-loud 语义与桌面教务解析器一致：垃圾输入宁可抛错，不出半份错课表。
  */
 
 function json(body, status = 200) {
@@ -69,7 +68,7 @@ test('loginJwglweixin：code 是字符串 "1" 也算成功；没 token 按上游
 // ── 解析器 ──────────────────────────────────────────────────────────────────
 
 test('parseClassTimeSlots：首字符丢弃，每两位一个 1-based 节次节点', () => {
-  // "1" + "03" "04" "05" → 3-5 节（where_to_study parse_sjd_slots 的 1030405 样例）
+  // "1" + "03" "04" "05" → 3-5 节（1030405 样例）
   assert.deepEqual(parseClassTimeSlots('1030405'), { start: 3, end: 5 })
   assert.deepEqual(parseClassTimeSlots('201'), { start: 1, end: 1 })
   // 非数字/单字符/超界节点识别不了

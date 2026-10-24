@@ -19,7 +19,7 @@ export function hainanPeriodTime(number) {
 }
 
 /** 北京校区节次作息（14 节）——与后端 services/jwglweixin.js 的 SLOT_TIMES
- *  逐字一致（where_to_study config.rs），改一处必须同步另一处。 */
+ *  必须保持一致，改一处必须同步另一处。 */
 export const BEIJING_SLOT_TIMES = [
   ['08:00', '08:45'], ['08:50', '09:35'], ['09:50', '10:35'], ['10:40', '11:25'],
   ['11:30', '12:15'], ['13:00', '13:45'], ['13:50', '14:35'], ['14:45', '15:30'],

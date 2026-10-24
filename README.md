@@ -50,58 +50,9 @@
 
 > 网络说明：后端在 `*.workers.dev` 上，国内部分运营商网络可能无法直连。若页面打得开但登录失败，换网络 / 开代理再试；自托管后端绑定自定义域名可彻底解决，见部署文档。
 
-## 部署（自托管）
+## 自托管
 
-前端 GitHub Pages + 后端 Cloudflare Workers，推送 `master` 自动构建发布：
-
-```sh
-npx wrangler login
-npx wrangler kv namespace create SESSIONS   # id 填入 wrangler.toml（[[kv_namespaces]] 表头要一起取消注释）
-npm run deploy:worker                        # 后端；前端由 CI 自动发布
-```
-
-仓库需要两个 Actions 配置：`VITE_BACKEND_URL`（变量，后端来源）与 `wrangler.toml` 里的 `FRONTEND_URL`（企微回流跳回地址，含子路径）。完整步骤、CORS、KV、WAF 限速建议见 **[docs/deployment.md](docs/deployment.md)**；后端也可以跑在任何 Node 服务器上（`npm run server`），代码零改动。
-
-## 本地开发
-
-```sh
-npm ci
-
-npm run server    # 终端 A：后端 → http://127.0.0.1:8787（只绑回环）
-npm run dev       # 终端 B：前端 → http://127.0.0.1:5173（/api 代理到后端）
-```
-
-```sh
-npm test               # 285 个单元/接口测试，不需要浏览器
-npm run test:browser   # 45 个浏览器测试（首次先 npx playwright install chromium；
-                       #   可用 BROWSER_EXECUTABLE 指向本机 Edge/Chrome）
-npm run gate           # 全量门禁：单元 → 安全（audit/密钥扫描/响应头）→ 构建 → 浏览器 → 性能预算
-npm run build          # 前端构建，产物在 dist/（相对路径，适配 Pages 子路径部署）
-npx wrangler dev       # 本地 Workers 运行时，与 Node 入口共用同一份 server/
-```
-
-CI 在 PR 和 `master` 推送上跑同一条 gate；`deploy.yml` 跑测试、构建并发布 Pages。
-
-## 工作原理
-
-```
-GitHub Pages（静态）                 Cloudflare Workers（Hono）
-┌─────────────────────┐            ┌──────────────────────────┐
-│  Vue 3 + Vite       │  HTTPS     │  /api/auth/*  登录与会话  │
-│  课表 / 作业 / 班级  │ ─────────> │  /api/ucloud/*  云邮      │
-│  不接触学校域名，    │  JSON      │  /api/jwgl/*   教务       │
-│  不持有任何密码      │            │  /api/classes/* 班级      │
-└─────────────────────┘            │  /file/*       S3 代理    │
-                                   └──────────────────────────┘
-```
-
-**为什么必须有后端**（不是偏好，是硬约束）：
-
-1. 浏览器拿不到 CAS 302 的 `Location`（opaque redirect），而取 ticket 全靠它
-2. 跨多个请求合并学校各系统的 `Set-Cookie`，服务端做才可靠
-3. 云邮文件存储的防盗链同时要求"带头"与"不带头"，只能服务端代理
-
-同一份 `server/` 代码同时跑 Node 与 Workers——会话存储是工厂注入的（本地文件 / KV），业务代码零分支。技术栈：Vue 3 + Hono。
+想跑一份自己的实例：后端可部署到 Cloudflare Workers（也可跑在任意 Node 服务器上），前端发布到任意静态托管即可；完整步骤、变量配置与安全建议见 **[docs/deployment.md](docs/deployment.md)**。
 
 ## 安全与隐私
 
@@ -131,17 +82,6 @@ GitHub Pages（静态）                 Cloudflare Workers（Hono）
 **自托管须知**
 
 - 自托管实例的会话数据存在你自己的存储里，你就是它的管理者和责任人：务必配置 `CORS_ORIGINS` 来源白名单、给登录接口加限速规则、全程 HTTPS；详见 [docs/deployment.md](docs/deployment.md)
-
-## 文档
-
-| 文档 | 内容 |
-|---|---|
-| [docs/architecture.md](docs/architecture.md) | 双系统登录、数据流、会话与凭证模型、安全边界 |
-| [docs/api-reference.md](docs/api-reference.md) | 逆向验证过的学校接口与深链，标注了实测/待验证 |
-| [docs/deployment.md](docs/deployment.md) | Pages + Workers 部署全流程（KV、CORS、FRONTEND_URL、限速） |
-| [docs/jwglweixin-source.md](docs/jwglweixin-source.md) | 移动教务协议逆向与实测结论（含 token 过期真实形状） |
-| [docs/unified-login-plan.md](docs/unified-login-plan.md) | 统一登录与企微登录的调研、候选方案与实测记录 |
-| [docs/delivery-report-2026-10-24.md](docs/delivery-report-2026-10-24.md) | 全产品交付报告 |
 
 ## 许可证
 

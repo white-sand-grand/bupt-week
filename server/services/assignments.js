@@ -7,7 +7,7 @@ const TENANT_ID = '000000'
 /**
  * 云邮作业。接口形状见 docs/api-reference.md §2.2–2.5（【实测】）。
  *
- * 字段语义（MYUCLOUD 用真实账号核对过，比 api-reference §2.3 的早期记录更准）：
+ * 字段语义（真实账号核对结论，比 api-reference §2.3 的早期记录更准）：
  * - status 是作业自身状态（2=进行中、3=已截止），与是否提交无关；
  * - assignmentStatus 才是本人提交状态（99=未提交、0=已提交、1=已批改）；
  * - submitTime 有值即已提交。三层判断都在前端 utils/deadline.js 里做。
