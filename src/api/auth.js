@@ -30,3 +30,10 @@ export const checkJwglSession = (sessionId) =>
 
 export const logoutJwgl = (sessionId) =>
   api('/api/jwgl/logout', { method: 'POST', body: { sessionId } })
+
+/**
+ * 补填教务密码（教务密码与统一身份密码不同的人用）。
+ * sessionId 是云邮会话——用它证明本人，密码只在这一次请求里用。
+ */
+export const submitJwglweixinPassword = (sessionId, password) =>
+  api('/api/auth/jwglweixin/password', { method: 'POST', body: { sessionId, password } })

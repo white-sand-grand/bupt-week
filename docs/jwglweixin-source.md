@@ -2,6 +2,13 @@
 
 > 2026-10-24 调研。问题：课表现走 `jwgl.bupt.edu.cn`（校内 DNS，校外 NXDOMAIN，
 > 见 docs/login-test-2026-10-24.md），而 where_to_study 不需要校园网就能拿课表。
+>
+> **2026-10-24 晚更新：本项目已按本文协议接入（server/services/jwglweixin.js），
+> 作为课表主源；登录协议已经真实上游验证**——假密码打 `/bjyddx/login` 返回
+> `{"code":"0","Msg":"该帐号不存在或密码错误！","data":{}}`，与源码推断一致：
+> code 为字符串、错误消息在 `Msg`、HTTP 200 + code 语义。登录编排（统一登录先试
+> 移动教务，失败回退 jwgl CAS/legacy）与教务密码补填（POST /api/auth/jwglweixin/
+> password，云邮会话鉴权）见 server/routes/auth.js。
 
 ## 一、关键事实：两套教务系统
 

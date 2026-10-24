@@ -53,8 +53,8 @@ const UCLOUD_SESSION = {
 }
 
 /**
- * 降级登录的响应：教务系统不可达（校外实测场景），云邮照常登录。
- * jwgl 为 null + jwglMessage 说明原因，jwglVia 标记 'unavailable'。
+ * 降级登录的响应：教务密码与统一身份不同（校外实测场景），云邮照常登录。
+ * jwgl 为 null + jwglMessage 说明原因，jwglPasswordNeeded 开放补填入口。
  */
 const LOGIN_JWGL_UNAVAILABLE = {
   success: true,
@@ -62,8 +62,8 @@ const LOGIN_JWGL_UNAVAILABLE = {
     ucloud: { sessionId: 'uc-sid', username: '2021001234', realName: '张三' },
     jwgl: null,
     jwglVia: 'unavailable',
-    jwglMessage:
-      '暂时连不上教务系统。教务系统一般仅限校园网内访问（校外可用学校 VPN），也可能正在临时维护；作业功能不受影响。',
+    jwglMessage: '教务登录失败：教务系统密码可能与统一身份密码不同。作业功能不受影响；可在课表页补填教务密码。',
+    jwglPasswordNeeded: true,
     expiresAt: EXPIRES_AT,
   },
 }
@@ -433,12 +433,14 @@ test('降级登录：教务不可达时登录仍成功，课表给黄条说明�
     await page.waitForFunction(() => document.querySelectorAll('.panel').length === 0)
     assert.match(await page.textContent('.topbar-auth'), /张三/)
 
-    // 默认视图是课表：必须是「教务不可用」黄条，而不是误导性的未登录空态
+    // 默认视图是课表：必须是「教务不可用」黄条，而不是误导性的未登录空态。
+    // 补填教务密码入口常驻（网络不可达与密码不同的降级都从这里走）
     await page.waitForSelector('.view .notice-warn')
     const notice = await page.textContent('.view .notice-warn')
-    assert.match(notice, /校园网/)
+    assert.match(notice, /教务系统密码与统一身份密码不同|教务系统暂时不可用/)
     assert.match(notice, /作业功能不受影响/)
     assert.equal(await page.locator('.view .empty').count(), 0)
+    await page.waitForSelector('.view .notice-warn .notice-action')
 
     // 切到作业视图：链路完全正常（mock 空列表 → 空态文案）
     await page.click('.tabs button:nth-child(2)')
@@ -453,6 +455,50 @@ test('降级登录：教务不可达时登录仍成功，课表给黄条说明�
     }))
     assert.ok(stored.ucloud, '云邮登录态应已保存')
     assert.equal(stored.jwgl, null, '教务侧降级时不能残留 jwgl 登录态')
+  } finally {
+    await page.close()
+  }
+})
+
+test('降级登录后补填教务密码：验证成功建教务会话，课表开始渲染', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.route('**/api/auth/login', (route) => fulfill(route, LOGIN_JWGL_UNAVAILABLE))
+    await page.route('**/api/ucloud/session', (route) => fulfill(route, UCLOUD_SESSION))
+    await page.route('**/api/jwgl/session', (route) =>
+      fulfill(route, { success: true, data: { sessionId: 'wx-sid', username: '2021001234', expiresAt: EXPIRES_AT } }),
+    )
+    await page.route('**/api/auth/jwglweixin/password', (route) => {
+      // 补填必须走云邮会话（鉴权本人），密码不落浏览器存储由下方断言守
+      const body = route.request().postDataJSON() || {}
+      assert.equal(body.sessionId, 'uc-sid')
+      return fulfill(route, { success: true, data: { sessionId: 'wx-sid', username: '2021001234', expiresAt: EXPIRES_AT } })
+    })
+    await page.route('**/api/jwgl/timetable', (route) => mockTimetable(route))
+
+    await page.goto(APP_ORIGIN, { waitUntil: 'networkidle' })
+    await page.fill(`${panel} input[type="text"]`, '2021001234')
+    await page.fill(`${panel} input[type="password"]`, 'pw')
+    await page.click(`${panel} button[type="submit"]`)
+    await page.waitForFunction(() => document.querySelectorAll('.panel').length === 0)
+    await page.waitForSelector('.view .notice-warn')
+
+    // 点开补填表单，输入教务密码提交
+    await page.click('.view .notice-warn .notice-action')
+    await page.fill('.view .password-form input', 'jwgl-secret')
+    await page.click('.view .password-form button[type="submit"]')
+
+    // 黄条整块卸载（ready 变 true），课表网格开始渲染
+    await page.waitForFunction(() => document.querySelector('.view .grid'))
+    assert.equal(await page.locator('.view .notice-warn').count(), 0)
+
+    // 教务登录态落库；教务密码本身绝不能出现在本地存储
+    const stored = await page.evaluate(() => ({
+      jwgl: localStorage.getItem('bupt-week-jwgl-auth'),
+      all: Object.values(localStorage).join(' '),
+    }))
+    assert.ok(stored.jwgl, '补填成功后教务登录态应保存')
+    assert.equal(stored.all.includes('jwgl-secret'), false, '教务密码绝不能落本地存储')
   } finally {
     await page.close()
   }

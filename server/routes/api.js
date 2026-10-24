@@ -2,6 +2,7 @@ import { Hono } from 'hono'
 import { ApiError, readJson } from '../http.js'
 import { resolveResourceDownload } from '../services/resources.js'
 import { fetchTimetable } from '../services/timetable.js'
+import { fetchTimetableWeixin } from '../services/jwglweixin.js'
 import { getAssignmentDetail, listAssignmentsWithCourses } from '../services/assignments.js'
 
 /**
@@ -33,8 +34,20 @@ export function createApiRoutes({ getSessionStore }) {
 
     const store = getSessionStore()
     const session = await store.get(sessionId)
-    if (!session || session.kind !== 'jwgl') {
+    if (!session || (session.kind !== 'jwgl' && session.kind !== 'jwglweixin')) {
       throw new ApiError(401, { stage: 'jwgl-auth', msg: '教务登录已过期，请重新登录' })
+    }
+
+    // 移动教务（主源）：token 会话，无 mode 概念（前端传来的固定值直接忽略）
+    if (session.kind === 'jwglweixin') {
+      let result
+      try {
+        result = await fetchTimetableWeixin({ token: session.token, week })
+      } catch (error) {
+        if (error instanceof ApiError && error.status === 401) await store.delete(sessionId)
+        throw error
+      }
+      return c.json({ success: true, data: { timetable: result.timetable } })
     }
 
     let result

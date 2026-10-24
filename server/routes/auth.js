@@ -3,6 +3,7 @@ import { ApiError, readJson } from '../http.js'
 import { CAS_CLIENTS, casAuthenticate, casClientRedirect, mergeCookies } from '../services/cas.js'
 import { getUserInfo, loginUcloudWithTicket, refreshAccessToken } from '../services/ucloud.js'
 import { loginJwgl, loginJwglWithTicket, validateJwglSession } from '../services/jwgl.js'
+import { loginJwglweixin, validateWeixinSession } from '../services/jwglweixin.js'
 import { createLoginRateLimiter } from '../rate-limit.js'
 import { withUserAgent } from '../user-agent.js'
 
@@ -61,49 +62,65 @@ async function renewUcloudSession(session) {
  * 请求另一个 service 的 ticket，CAS 直接给、不重新认证。这就是"统一登录"——
  * 两个系统共用同一套统一身份认证（实测见 docs/unified-login-plan.md）。
  *
- * 教务处那条路（ticket → 会话）的入口路径是【待验证】的，失败时回退到已经跑通的
- * encodeInp 老登录。两条路按可用性切换，互不影响。
+ * 教务侧的数据源优先级（2026-10-24 起）：
+ *   1. 移动教务 jwglweixin（主源：公网可达，token 登录不走 CAS）
+ *   2. 教务处 jwgl（回退：CAS ticket 路径【待验证】→ encodeInp 老登录）
+ * 全部失败时降级（云邮照常登录、教务 null）：
+ *   - 移动教务报密码错（401）→ jwglPasswordNeeded，提示教务密码可能与统一
+ *     身份密码不同，前端给补填入口
+ *   - jwgl-connect（网络不可达）→ 校园网场景文案
  */
 async function loginBothSystems({ username, password, fetchImpl = fetch }) {
   // 第一次：云邮。这次会真正校验学号密码。
   const ucloudCas = await casAuthenticate({ username, password, service: UCLOUD_SERVICE, fetchImpl })
   const ucloud = await loginUcloudWithTicket(ucloudCas.ticket, { username, fetchImpl })
 
-  // 第二次：教务处。复用同一个 Cookie 罐，不重新认证。
-  //
-  // 教务系统的域名只在校内 DNS 存在（校外实测 NXDOMAIN），校外统一登录必然
-  // 走到这里失败。云邮那侧已经真实验证过学号密码、会话已到手——再因为教务
-  // 连不上把整体登录拒掉，等于把 100% 可用的作业功能也关在门外（2026-10-24
-  // 校外实测踩过）。所以 jwgl-connect（连不上，网络/环境类失败）降级：云邮
-  // 照常登录，教务侧返回 null 由前端呈现「仅校园网可用」。
-  // 其他 stage（jwgl-login 401、jwgl-verify 等）是教务侧自身异常，继续整体
-  // 失败，不静默吞掉。
+  // 第二次：教务。先试移动教务。
   let jwgl
-  let jwglVia = 'cas'
+  let jwglVia = 'weixin'
   let jwglMessage = ''
+  let jwglPasswordNeeded = false
   try {
-    const jwglCas = await casAuthenticate({
-      username,
-      password,
-      service: JWGL_SERVICE,
-      fetchImpl: reuseCookies(fetchImpl, ucloudCas.cookies),
-    })
-    jwgl = await loginJwglWithTicket(jwglCas.ticket, fetchImpl)
-  } catch (error) {
-    console.warn(`[auth] 教务处 CAS 登录失败（${error.stage || 'unknown'}: ${error.message}），回退到原登录方式`)
-    jwglVia = 'legacy'
+    jwgl = { kind: 'jwglweixin', ...(await loginJwglweixin({ username, password, fetchImpl })) }
+  } catch (weixinError) {
+    // 401 = 密码不匹配（教务密码 ≠ 统一身份密码）；502 = 移动教务不可达。
+    // 两种都要继续试 jwgl——校内可能 jwglweixin 故障，校外密码不同但校内可回退。
+    const passwordWrong = weixinError.status === 401
+    console.warn(`[auth] 移动教务登录失败（${weixinError.stage || 'unknown'}: ${weixinError.message}），回退教务处 CAS`)
+    jwglVia = 'cas'
     try {
-      jwgl = await loginJwgl({ username, password, fetchImpl })
-    } catch (legacyError) {
-      if (legacyError.stage === 'jwgl-connect') {
-        console.warn('[auth] 教务系统不可达，降级为仅云邮登录')
-        return { ucloud, jwgl: null, jwglVia: 'unavailable', jwglMessage: legacyError.message }
+      const jwglCas = await casAuthenticate({
+        username,
+        password,
+        service: JWGL_SERVICE,
+        fetchImpl: reuseCookies(fetchImpl, ucloudCas.cookies),
+      })
+      jwgl = { kind: 'jwgl', ...(await loginJwglWithTicket(jwglCas.ticket, fetchImpl)) }
+    } catch (error) {
+      console.warn(`[auth] 教务处 CAS 登录失败（${error.stage || 'unknown'}: ${error.message}），回退到原登录方式`)
+      jwglVia = 'legacy'
+      try {
+        jwgl = { kind: 'jwgl', ...(await loginJwgl({ username, password, fetchImpl })) }
+      } catch (legacyError) {
+        const unreachable = legacyError.stage === 'jwgl-connect'
+        if (unreachable || (passwordWrong && legacyError.status === 401)) {
+          console.warn('[auth] 教务登录全部失败，降级为仅云邮登录')
+          return {
+            ucloud,
+            jwgl: null,
+            jwglVia: 'unavailable',
+            jwglMessage: passwordWrong
+              ? '教务登录失败：教务系统密码可能与统一身份密码不同。作业功能不受影响；可在课表页补填教务密码。'
+              : legacyError.message,
+            jwglPasswordNeeded: passwordWrong,
+          }
+        }
+        throw legacyError
       }
-      throw legacyError
     }
   }
 
-  return { ucloud, jwgl, jwglVia, jwglMessage }
+  return { ucloud, jwgl, jwglVia, jwglMessage, jwglPasswordNeeded }
 }
 
 /**
@@ -134,7 +151,7 @@ export function createAuthRoutes({ getSessionStore, frontendUrl = '', allowedOri
 
   routes.post('/auth/login', limitLogin(async (c) => {
     const { username, password } = await readJson(c.req.raw)
-    const { ucloud, jwgl, jwglVia, jwglMessage } = await loginBothSystems({ username, password })
+    const { ucloud, jwgl, jwglVia, jwglMessage, jwglPasswordNeeded } = await loginBothSystems({ username, password })
 
     const store = getSessionStore()
     const ucloudSessionId = newSessionId()
@@ -145,14 +162,14 @@ export function createAuthRoutes({ getSessionStore, frontendUrl = '', allowedOri
       expiresAt: expiresAt(),
     })
 
-    // 教务侧降级（jwgl 为 null）时不建会话：store 里只有云邮一条，
-    // 前端按 data.jwgl === null 呈现「仅云邮可用」。
+    // 教务侧降级（jwgl 为 null）时不建会话。凭证形态按数据源分两种：
+    // jwglweixin（token）/ jwgl（Cookie 罐），消费方按 kind 分流。
     let jwglSessionId = null
     if (jwgl) {
       jwglSessionId = newSessionId()
       await store.set(jwglSessionId, {
-        kind: 'jwgl',
-        cookies: jwgl.cookies,
+        kind: jwgl.kind,
+        ...(jwgl.kind === 'jwglweixin' ? { token: jwgl.token } : { cookies: jwgl.cookies }),
         username,
         expiresAt: expiresAt(),
       })
@@ -164,9 +181,10 @@ export function createAuthRoutes({ getSessionStore, frontendUrl = '', allowedOri
         ucloud: { sessionId: ucloudSessionId, username: ucloud.username, realName: ucloud.realName },
         // 教务侧降级时为 null（jwglMessage 说明原因），前端据此呈现「仅云邮可用」
         jwgl: jwgl ? { sessionId: jwglSessionId, username } : null,
-        // 方便排查：教务处这次是走 CAS、回退到了老登录、还是压根不可达
+        // 方便排查：移动教务 / 教务处 CAS / 老登录 / 全部不可达
         jwglVia,
         ...(jwglMessage ? { jwglMessage } : {}),
+        ...(jwglPasswordNeeded ? { jwglPasswordNeeded } : {}),
         expiresAt: expiresAt(),
       },
     })
@@ -243,8 +261,21 @@ export function createAuthRoutes({ getSessionStore, frontendUrl = '', allowedOri
     const store = getSessionStore()
     const session = await store.get(sessionId)
 
-    if (!session || session.kind !== 'jwgl') {
+    if (!session || (session.kind !== 'jwgl' && session.kind !== 'jwglweixin')) {
       throw new ApiError(401, { stage: 'jwgl-auth', msg: '教务登录已过期，请重新登录' })
+    }
+
+    if (session.kind === 'jwglweixin') {
+      try {
+        await validateWeixinSession({ token: session.token })
+      } catch (error) {
+        if (error.status === 401) await store.delete(sessionId)
+        throw error
+      }
+      return c.json({
+        success: true,
+        data: { sessionId, username: session.username, expiresAt: session.expiresAt },
+      })
     }
 
     let cookies
@@ -262,6 +293,37 @@ export function createAuthRoutes({ getSessionStore, frontendUrl = '', allowedOri
       data: { sessionId, username: session.username, expiresAt: session.expiresAt },
     })
   })
+
+  /**
+   * 补填教务密码：统一登录假定教务密码=统一身份密码，不同的人在这里补。
+   *
+   * 用云邮会话鉴权（能拿出有效云邮会话就是本人），拿会话里的学号 + 用户补填
+   * 的密码登移动教务。密码只在这一次请求里用，不落任何存储。
+   */
+  routes.post('/auth/jwglweixin/password', limitLogin(async (c) => {
+    const { sessionId, password } = await readJson(c.req.raw)
+    const store = getSessionStore()
+    const session = await store.get(sessionId)
+
+    if (!session || session.kind !== 'ucloud') {
+      throw new ApiError(401, { stage: 'ucloud-auth', msg: '云邮登录已过期，请重新登录' })
+    }
+
+    const { token } = await loginJwglweixin({ username: session.username, password })
+
+    const jwglSessionId = newSessionId()
+    await store.set(jwglSessionId, {
+      kind: 'jwglweixin',
+      token,
+      username: session.username,
+      expiresAt: expiresAt(),
+    })
+
+    return c.json({
+      success: true,
+      data: { sessionId: jwglSessionId, username: session.username, expiresAt: expiresAt() },
+    })
+  }))
 
   routes.post('/jwgl/logout', async (c) => {
     const { sessionId } = await readJson(c.req.raw)

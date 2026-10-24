@@ -6,6 +6,7 @@ import {
   login,
   logoutJwgl,
   logoutUcloud,
+  submitJwglweixinPassword,
 } from '../api/auth.js'
 
 const UCLOUD_KEY = 'bupt-week-ucloud-auth'
@@ -96,6 +97,23 @@ export const auth = {
       expiresAt: data.expiresAt,
     }
     write(UCLOUD_KEY, ucloud.value)
+  },
+
+  /**
+   * 补填教务密码（统一登录假定教务密码=统一身份密码，不同的人在这里补）。
+   * 成功后 jwgl 侧登录态生效（ready 变 true，课表视图自动开始同步）；
+   * 密码仍不对抛给调用方展示。密码不落任何存储。
+   */
+  async submitJwglPassword(password) {
+    const ucloudId = ucloud.value?.sessionId
+    if (!ucloudId) throw new Error('请先登录')
+    const data = await submitJwglweixinPassword(ucloudId, password)
+    jwgl.value = {
+      sessionId: data.sessionId,
+      username: data.username || ucloud.value.username,
+      expiresAt: data.expiresAt,
+    }
+    write(JWGL_KEY, jwgl.value)
   },
 
   /**

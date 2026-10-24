@@ -27,11 +27,30 @@ function post(app, path, body) {
 /**
  * 造假 fetch，按 URL 特征分流响应，并把每次调用记下来。
  * 这样能同时验证"云邮走了一次 CAS"和"教务处走了第二次 CAS"。
+ *
+ * jwglweixin（移动教务主源）三种行为：
+ *   'ok' → 换到 token；'wrong-password' → code 0；'unreachable'（默认）→
+ *   网络不可达。默认不可达：本文件既有用例测的是教务处 jwgl 的 CAS/legacy/
+ *   降级链，主源可用时根本走不到那里。
  */
-function fakeUpstream({ jwglViaCas = true, jwglUnreachable = false, log = [] } = {}) {
+function fakeUpstream({ jwglViaCas = true, jwglUnreachable = false, jwglweixin = 'unreachable', log = [] } = {}) {
   return async (url, options = {}) => {
     const target = String(url)
     log.push({ url: target, options })
+
+    if (target.includes('jwglweixin.bupt.edu.cn/bjyddx/login')) {
+      if (jwglweixin === 'ok') {
+        return json({ code: 1, data: { token: 'wx-token', expires_in: 7200 } })
+      }
+      if (jwglweixin === 'wrong-password') {
+        return json({ code: 0, Msg: '用户名或密码错误' })
+      }
+      throw new Error('fetch failed')
+    }
+    if (target.includes('jwglweixin.bupt.edu.cn')) {
+      // 课表请求只有登录成功后才会发生；给个能用的空壳
+      return json({ code: 1, data: [{ date: [{ mxrq: '2026-10-26', xqid: '1', zc: '8' }] }] })
+    }
 
     if (target.includes('auth.bupt.edu.cn/authserver/login?service=')) {
       const service = decodeURIComponent(new URL(target).searchParams.get('service') || '')
@@ -210,6 +229,99 @@ test('POST /api/auth/login：教务处 CAS 走不通时回退到原登录，整�
   // 老登录的 Cookie 也进了会话
   const jwglSession = await store.get(body.data.jwgl.sessionId)
   assert.ok(jwglSession.cookies.includes('JSESSIONID='))
+})
+
+test('POST /api/auth/login：移动教务可用时作为主源，jwglVia=weixin', async (t) => {
+  const { app, store } = makeApp()
+  const log = []
+  t.mock.method(globalThis, 'fetch', fakeUpstream({ jwglweixin: 'ok', log }))
+
+  const response = await post(app, '/api/auth/login', { username: 'u', password: 'p' })
+  const body = await response.json()
+
+  assert.equal(response.status, 200)
+  assert.equal(body.data.jwglVia, 'weixin')
+
+  // 会话是 token 型
+  const session = await store.get(body.data.jwgl.sessionId)
+  assert.equal(session.kind, 'jwglweixin')
+  assert.equal(session.token, 'wx-token')
+
+  // 主源成功就不该去碰教务处 jwgl（校外它的域名根本不存在）
+  assert.equal(log.some((call) => call.url.includes('jwgl.bupt.edu.cn')), false)
+})
+
+test('POST /api/auth/login：移动教务挂了回退教务处 CAS，整体仍成功', async (t) => {
+  const { app, store } = makeApp()
+  const log = []
+  t.mock.method(globalThis, 'fetch', fakeUpstream({ jwglweixin: 'unreachable', jwglViaCas: true, log }))
+
+  const response = await post(app, '/api/auth/login', { username: 'u', password: 'p' })
+  const body = await response.json()
+
+  assert.equal(response.status, 200)
+  assert.equal(body.data.jwglVia, 'cas')
+  const session = await store.get(body.data.jwgl.sessionId)
+  assert.equal(session.kind, 'jwgl')
+})
+
+test('POST /api/auth/login：教务密码与统一身份不同（校外）→ 降级 + jwglPasswordNeeded', async (t) => {
+  const { app, store } = makeApp()
+  t.mock.method(globalThis, 'fetch', fakeUpstream({ jwglweixin: 'wrong-password', jwglUnreachable: true }))
+
+  const response = await post(app, '/api/auth/login', { username: 'u', password: 'p' })
+  const body = await response.json()
+
+  // 云邮照常登录，教务降级，但降级原因标成「密码不同」并开放补填
+  assert.equal(response.status, 200)
+  assert.equal(body.data.jwglVia, 'unavailable')
+  assert.equal(body.data.jwglPasswordNeeded, true)
+  assert.match(body.data.jwglMessage, /补填教务密码/)
+  assert.equal(store.size, 1)
+})
+
+test('POST /api/auth/jwglweixin/password：补填教务密码，成功建移动教务会话', async (t) => {
+  const { app, store } = makeApp()
+  await store.set('uc-sid', {
+    kind: 'ucloud',
+    accessToken: 'tk',
+    username: '2021001234',
+    expiresAt: Date.now() + 3600_000,
+  })
+  let seen = null
+  t.mock.method(globalThis, 'fetch', async (url, options = {}) => {
+    seen = { url: String(url), body: options.body }
+    return json({ code: 1, data: { token: 'wx-token-2' } })
+  })
+
+  const response = await post(app, '/api/auth/jwglweixin/password', { sessionId: 'uc-sid', password: 'jwgl-pw' })
+  const body = await response.json()
+
+  assert.equal(response.status, 200)
+  assert.match(body.data.sessionId, /^[0-9a-f-]{36}$/)
+  // 用云邮会话里的学号 + 补填的密码登录；密码不进任何持久化
+  assert.ok(seen.url.includes('/bjyddx/login'))
+  assert.equal(seen.body, 'userNo=2021001234&pwd=jwgl-pw')
+  const session = await store.get(body.data.sessionId)
+  assert.equal(session.kind, 'jwglweixin')
+  assert.equal(session.token, 'wx-token-2')
+  assert.equal(session.username, '2021001234')
+  assert.equal(JSON.stringify(session).includes('jwgl-pw'), false, '密码绝不能落会话')
+})
+
+test('POST /api/auth/jwglweixin/password：密码仍不对报 401，云邮会话缺失也 401', async (t) => {
+  const { app, store } = makeApp()
+  await store.set('uc-sid', {
+    kind: 'ucloud', accessToken: 'tk', username: '2021001234', expiresAt: Date.now() + 3600_000,
+  })
+  t.mock.method(globalThis, 'fetch', async () => json({ code: 0, Msg: '用户名或密码错误' }))
+
+  const wrong = await post(app, '/api/auth/jwglweixin/password', { sessionId: 'uc-sid', password: 'still-bad' })
+  assert.equal(wrong.status, 401)
+  assert.match((await wrong.json()).msg, /用户名或密码错误/)
+
+  const noSession = await post(app, '/api/auth/jwglweixin/password', { sessionId: 'nope', password: 'x' })
+  assert.equal(noSession.status, 401)
 })
 
 test('POST /api/auth/login：教务系统不可达时降级为仅云邮登录，作业功能不陪葬', async (t) => {

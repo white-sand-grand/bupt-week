@@ -554,18 +554,28 @@ Referer: https://jwgl.bupt.edu.cn/jsxsd/framework/xsMain_bjyddx.jsp
 
 ```
 POST /api/auth/login           { username, password }  → 一次登两系统（含限速）
-                                                         教务不可达时降级：jwgl=null + jwglMessage，
-                                                         云邮会话照常建立（jwglVia='unavailable'）
+                                                         教务侧优先移动教务（jwglweixin，
+                                                         公网可达）：jwglVia='weixin'；
+                                                         失败回退 jwgl CAS/legacy。
+                                                         全部失败降级：jwgl=null +
+                                                         jwglMessage，密码不同时
+                                                         jwglPasswordNeeded=true
+                                                         （可补填教务密码）
+POST /api/auth/jwglweixin/password { sessionId(云邮), password } → 补填教务密码，
+                                                         建移动教务会话（密码不落存储）
 POST /api/ucloud/session       { sessionId }           → 校验并静默续期
 POST /api/ucloud/logout        { sessionId }
 POST /api/ucloud/assignments   { sessionId }           → 全量作业 records 透传
 POST /api/ucloud/assignment/detail { sessionId, assignmentId } → 附件元数据
 POST /api/ucloud/resource/download { sessionId, resourceId }   → /file 下载路径
 
-POST /api/jwgl/session         { sessionId }
+POST /api/jwgl/session         { sessionId }           → 校验（jwgl Cookie 会话或
+                                                         jwglweixin token 会话）
 POST /api/jwgl/logout          { sessionId }
 POST /api/jwgl/timetable       { sessionId, week?, mode? } → 解析后的周课表
-                                                     （不带 week 时为当前周 + 全部周次）
+                                                     （不带 week 时为当前周 + 全部周次；
+                                                     jwglweixin 会话时 mode 忽略，
+                                                     固定 mode='jwglweixin'）
 
 GET  /api/health
 GET  /api/auth/wecom/start | /api/auth/wecom/callback   → 企微识别（state 一次性绑定）

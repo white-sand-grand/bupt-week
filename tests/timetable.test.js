@@ -4,6 +4,10 @@ import { createBackend } from '../server/app.js'
 import { MemorySessionStore } from '../server/storage/memory.js'
 import { parseTimetable } from '../server/services/timetable.js'
 
+function json(body, status = 200) {
+  return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
+}
+
 /**
  * 课表解析器与路由。
  *
@@ -137,6 +141,43 @@ test('POST /api/jwgl/timetable：返回解析后的课表并回写 Cookie', asyn
   assert.equal(body.data.timetable.courses.length, 2)
   assert.equal((await store.get('jw')).cookies, 'JSESSIONID=fresh', '新 Cookie 应写回会话')
   assert.ok(seenUrl.includes('xsdPerson.jsp'), seenUrl)
+})
+
+test('POST /api/jwgl/timetable：jwglweixin 会话走移动教务，mode 被忽略', async (t) => {
+  const { app, store } = makeApp()
+  await store.set('wx', { kind: 'jwglweixin', token: 'tk', username: 'u', expiresAt: Date.now() + 86400000 })
+
+  const calls = []
+  t.mock.method(globalThis, 'fetch', async (url, options = {}) => {
+    calls.push({ url: String(url), token: options.headers?.token })
+    const week = new URL(String(url)).searchParams.get('week')
+    if (week === 'all') {
+      return json({ code: 1, data: [{ courses: [
+        { courseName: '高等数学', weekDay: '1', classTime: '10102', classWeek: '1-2周', buildingName: '教三', classroomName: '101' },
+      ] }] })
+    }
+    return json({ code: 1, data: [{ date: [{ mxrq: '2026-10-26', xqid: '1', zc: '2' }] }] })
+  })
+
+  // 前端会带上 jwgl 的 mode 参数（固定值 'jwglweixin'）——路由要忽略它
+  const response = await post(app, '/api/jwgl/timetable', { sessionId: 'wx', week: 1, mode: 'jwglweixin' })
+  const body = await response.json()
+
+  assert.equal(response.status, 200)
+  assert.equal(body.data.timetable.week, 1)
+  assert.equal(body.data.timetable.courses[0].name, '高等数学')
+  assert.equal(body.data.timetable.mode, 'jwglweixin')
+  for (const call of calls) assert.equal(call.token, 'tk', 'token 头必须带上')
+})
+
+test('POST /api/jwgl/timetable：jwglweixin token 失效 401 并删会话', async (t) => {
+  const { app, store } = makeApp()
+  await store.set('wx', { kind: 'jwglweixin', token: 'stale', username: 'u', expiresAt: Date.now() + 86400000 })
+  t.mock.method(globalThis, 'fetch', async () => json({ code: 0, msg: 'token失效' }, 500))
+
+  const response = await post(app, '/api/jwgl/timetable', { sessionId: 'wx' })
+  assert.equal(response.status, 401)
+  assert.equal(await store.get('wx'), undefined, '失效会话应删除')
 })
 
 test('POST /api/jwgl/timetable：带 week 请求时校验教务往返一致', async (t) => {

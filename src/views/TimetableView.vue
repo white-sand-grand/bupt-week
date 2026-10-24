@@ -16,6 +16,27 @@ const gridScroll = ref(null)
 /** 首次渲染后只自动定位一次「今天」列，用户手动切周/滚动后不再干预。 */
 let revealedToday = false
 
+// ── 教务密码补填（降级登录的出路之一） ─────────────────────────────────────
+const passwordFormOpen = ref(false)
+const passwordInput = ref('')
+const passwordBusy = ref(false)
+const passwordError = ref('')
+
+async function submitJwglPassword() {
+  if (!passwordInput.value || passwordBusy.value) return
+  passwordBusy.value = true
+  passwordError.value = ''
+  try {
+    await auth.submitJwglPassword(passwordInput.value)
+    // 成功：jwglReady 变 true，黄条（含本表单）整块卸载，下方开始自动同步
+    passwordInput.value = ''
+  } catch (caught) {
+    passwordError.value = caught.message || '补填失败，请稍后重试'
+  } finally {
+    passwordBusy.value = false
+  }
+}
+
 const periods = computed(() => timetable.activeWeek.value?.periods ?? [])
 const days = computed(() => timetable.activeWeek.value?.days ?? [])
 const weeks = computed(() => timetable.weeks.value)
@@ -158,12 +179,29 @@ watch(() => props.ready, startSync)
       <button class="notice-action" type="button" @click="timetable.retry()">重试</button>
     </div>
 
-    <!-- 已登录但教务侧不可用（降级登录/企微登录）：黄条说明，区别于未登录空态 -->
+    <!-- 已登录但教务侧不可用（降级登录/企微登录）：黄条说明 + 补填教务密码出路 -->
     <div v-if="!ready && degraded" class="notice notice-warn" role="status">
       <span class="notice-text">
-        课表来自教务系统，本次登录没有建立教务会话——教务系统一般仅限校园网访问（校外可用学校 VPN），也可能正在维护。
-        作业功能不受影响；连上校园网后退出并重新登录即可获取课表。
+        本次登录没有建立教务会话：可能是教务系统密码与统一身份密码不同，
+        也可能是教务系统暂时不可用。作业功能不受影响。
       </span>
+      <button class="notice-action" type="button" @click="passwordFormOpen = !passwordFormOpen">
+        {{ passwordFormOpen ? '收起' : '补填教务密码' }}
+      </button>
+      <form v-if="passwordFormOpen" class="password-form" @submit.prevent="submitJwglPassword">
+        <input
+          v-model="passwordInput"
+          type="password"
+          placeholder="教务系统密码"
+          autocomplete="current-password"
+          :disabled="passwordBusy"
+          required
+        />
+        <button class="notice-action" type="submit" :disabled="passwordBusy || !passwordInput">
+          {{ passwordBusy ? '验证中…' : '验证并获取课表' }}
+        </button>
+      </form>
+      <p v-if="passwordError" class="password-error">{{ passwordError }}</p>
     </div>
     <p v-else-if="!ready" class="empty">
       登录后可以查看课表。未登录也能浏览此页面，只是没有数据。
@@ -340,6 +378,32 @@ h2 {
 .notice-warn .notice-text {
   color: var(--warn);
   line-height: 1.55;
+}
+
+/* 补填教务密码的就地表单：与登录面板同一套输入规范（16px 防 iOS 缩放） */
+.password-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.password-form input {
+  flex: 1 1 12rem;
+  min-height: var(--touch);
+  padding: 0.5rem 0.75rem;
+  border: 1px solid #fde68a;
+  border-radius: var(--radius-sm);
+  font-family: inherit;
+  font-size: 16px;
+  color: var(--ink);
+  background: var(--surface);
+}
+
+.password-error {
+  margin: 0;
+  font-size: 0.8125rem;
+  color: var(--error);
 }
 
 .notice-error {
