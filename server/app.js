@@ -4,6 +4,7 @@ import { backendCors } from './cors.js'
 import { mountProxyRoutes } from './routes/proxy.js'
 import { createApiRoutes } from './routes/api.js'
 import { createAuthRoutes } from './routes/auth.js'
+import { createClassesRoutes } from './routes/classes.js'
 
 /**
  * 后端应用工厂。
@@ -11,9 +12,9 @@ import { createAuthRoutes } from './routes/auth.js'
  * Node 入口和 Workers 入口调用的是同一个函数，代码不分支。
  * 环境差异（文件系统 / KV / 监听端口）全部由入口注入。
  *
- * @param {{ getSessionStore?: object, allowedOrigins?: string[], frontendUrl?: string }} options
+ * @param {{ getSessionStore?: object, getClassStore?: object, allowedOrigins?: string[], frontendUrl?: string }} options
  */
-export function createBackend({ getSessionStore = null, allowedOrigins = [], frontendUrl = '' } = {}) {
+export function createBackend({ getSessionStore = null, getClassStore = null, allowedOrigins = [], frontendUrl = '' } = {}) {
   const app = new Hono()
 
   app.use('*', backendCors(allowedOrigins))
@@ -34,6 +35,9 @@ export function createBackend({ getSessionStore = null, allowedOrigins = [], fro
   if (getSessionStore) {
     app.route('/api', createApiRoutes({ getSessionStore }))
     app.route('/api', createAuthRoutes({ getSessionStore, frontendUrl, allowedOrigins }))
+    if (getClassStore) {
+      app.route('/api', createClassesRoutes({ getSessionStore, getClassStore }))
+    }
   }
 
   mountProxyRoutes(app, { allowedOrigins })

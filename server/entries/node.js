@@ -13,10 +13,13 @@ const allowedOrigins = String(process.env.CORS_ORIGINS || '')
 
 // 会话落到项目目录的 .sessions.local，权限 0600，已被 .gitignore 挡住。
 // 用工厂而不是直接传实例：FileSessionStore 构造时会读文件，推迟到真正有请求时再打开。
+// 班级数据与会话共用这一个实例——键带 class:/user:/code: 前缀不会撞号；
+// 不能建第二个 FileSessionStore 指同一文件，save() 是整文件覆写，会互相清数据。
 const store = new FileSessionStore()
 
 const app = createBackend({
   getSessionStore: () => store,
+  getClassStore: () => store,
   allowedOrigins,
   // 企业微信登录成功后跳回前端；不设则按 Referer 推断
   frontendUrl: process.env.FRONTEND_URL || '',
