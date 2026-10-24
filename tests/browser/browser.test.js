@@ -833,21 +833,29 @@ async function loginAndOpenTimetable(page) {
   await page.waitForFunction(() => document.querySelectorAll('.panel').length === 0)
 }
 
-test('课表：登录后渲染网格，课程落在正确的星期与节次', async () => {
+test('课表：登录后渲染网格，课程落在正确的星期与节次，跨节课纵向铺满', async () => {
   const page = await browser.newPage()
   try {
     await loginAndOpenTimetable(page)
     await page.waitForSelector('.grid')
 
-    // 第 1 节 · 星期一 有高等数学
-    const mondayCell = await page.textContent('.grid tbody tr:nth-child(1) td:nth-child(2)')
-    assert.match(mondayCell, /高等数学/)
+    // 第 1 节 · 星期一 有高等数学，且用 rowspan 铺满 1-2 节（不是只占一节）
+    const mondayCell = page.locator('.grid tbody tr:nth-child(1) td:nth-child(2)')
+    assert.match(await mondayCell.textContent(), /高等数学/)
+    assert.equal(await mondayCell.getAttribute('rowspan'), '2', '跨节课程要纵向合并两节')
 
-    // 第 2 节 · 星期一 是课程的延续（不重复课名）；第 2 节 · 星期三 是大学英语
-    const mondayCont = await page.textContent('.grid tbody tr:nth-child(2) td:nth-child(2)')
-    assert.equal(mondayCont.includes('高等数学'), false, '延续节次不该重复课名')
-    const wednesday = await page.textContent('.grid tbody tr:nth-child(2) td:nth-child(4)')
+    // 第 2 行的周一列没有独立单元格（被上面的 rowspan 占据），该行只剩 6 格
+    assert.equal(await page.locator('.grid tbody tr:nth-child(2) > td').count(), 6)
+
+    // 第 2 节 · 星期三 是大学英语
+    const wednesday = await page.textContent('.grid tbody tr:nth-child(2) td:nth-child(3)')
     assert.match(wednesday, /大学英语/)
+
+    // 节次列双时刻：京行是教务的北京时刻，琼行是海南时刻（第 2 节两地不同）
+    const times = await page.locator('.grid tbody tr:nth-child(2) .period-time').allTextContents()
+    assert.equal(times.length, 2)
+    assert.match(times[0], /京 08:55~09:40/)
+    assert.match(times[1], /琼 08:50~09:35/)
 
     // 周次下拉有同步到的两周
     const options = await page.locator('.week-picker option').allTextContents()

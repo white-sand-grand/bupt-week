@@ -3,6 +3,7 @@ import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { auth } from '../composables/auth.js'
 import { timetable } from '../composables/timetable.js'
 import { currentTimetableWeek, groupTimetableCourses } from '../utils/timetable-cache.js'
+import { hainanPeriodTime } from '../utils/period-times.js'
 import { formatUpdatedAt, beijingDateString } from '../utils/format.js'
 
 const props = defineProps({
@@ -51,10 +52,32 @@ const dayGroups = computed(() => {
   return days.value.map((_, index) => groupTimetableCourses(courses, index + 1))
 })
 
-/** 某节次行上要展示的课程组：组从本行开始，或从前面延续到本行。 */
-function groupsAt(groups, periodNumber) {
-  return groups.filter((group) => group.start === periodNumber
-    || (group.start < periodNumber && group.end >= periodNumber))
+/** 每天的单元格布局。groupTimetableCourses 保证组与组互不重叠，所以每组
+ *  直接用 rowspan 铺满 start..end 的所有行；被跨过的行不渲染该格。
+ *  Map: 节次号 → { group }（组在此行开始）| { covered: true }（被上方跨行格占据）。 */
+const dayLayouts = computed(() =>
+  dayGroups.value.map((groups) => {
+    const layout = new Map()
+    for (const group of groups) {
+      layout.set(group.start, { group })
+      for (let period = group.start + 1; period <= group.end; period += 1) {
+        layout.set(period, { covered: true })
+      }
+    }
+    return layout
+  }),
+)
+
+/** 'empty' 空格渲染 td；'start' 组首行渲染带 rowspan 的 td；'covered' 被
+ *  上方跨行格占据，本行不渲染该格（渲染了表格会多出一列）。 */
+function cellState(dayIndex, periodNumber) {
+  const cell = dayLayouts.value[dayIndex]?.get(periodNumber)
+  if (!cell) return 'empty'
+  return cell.group ? 'start' : 'covered'
+}
+
+function groupAt(dayIndex, periodNumber) {
+  return dayLayouts.value[dayIndex]?.get(periodNumber)?.group ?? null
 }
 
 /** 课程名 → 稳定色号（0-7）：同名课程永远同色，跨周、跨单元格一致。
@@ -226,36 +249,33 @@ watch(() => props.ready, startSync)
           <tr v-for="period in periods" :key="period.number">
             <th class="period">
               <span class="period-number">{{ period.number }}</span>
-              <span class="period-time">{{ period.time }}</span>
+              <span class="period-time">京 {{ period.time }}</span>
+              <span v-if="hainanPeriodTime(period.number)" class="period-time period-time-hn">
+                琼 {{ hainanPeriodTime(period.number) }}
+              </span>
             </th>
-            <td
-              v-for="(groups, dayIndex) in dayGroups"
-              :key="dayIndex"
-              class="cell"
-              :class="{ 'cell-today': isToday(dayIndex) }"
-            >
-              <div v-for="group in groupsAt(groups, period.number)" :key="`${group.start}-${group.courses[0].name}`" class="course">
-                <template v-if="group.start === period.number">
-                  <span
-                    v-for="course in group.courses"
-                    :key="course.name + course.start"
-                    class="course-item"
-                    :class="courseColor(course.name)"
-                    :title="`${course.name} ${course.schedule} ${course.location}`"
-                  >
-                    <strong class="course-name">{{ course.name }}</strong>
-                    <span class="course-meta">{{ course.location }}</span>
-                  </span>
-                </template>
-                <!-- 延续节次：画同色延伸条表示这门课从上一节连过来，不重复课名 -->
+            <template v-for="(_, dayIndex) in dayGroups" :key="dayIndex">
+              <!-- covered 的格不渲染：上方 rowspan 格已经占了这一列的这一行 -->
+              <td
+                v-if="cellState(dayIndex, period.number) !== 'covered'"
+                class="cell"
+                :class="{ 'cell-today': isToday(dayIndex), 'cell-course': cellState(dayIndex, period.number) === 'start' }"
+                :rowspan="cellState(dayIndex, period.number) === 'start'
+                  ? groupAt(dayIndex, period.number).end - period.number + 1
+                  : undefined"
+              >
                 <span
-                  v-else
-                  class="course-continued"
-                  :class="courseColor(group.courses[0].name)"
-                  aria-hidden="true"
-                ></span>
-              </div>
-            </td>
+                  v-for="course in groupAt(dayIndex, period.number)?.courses ?? []"
+                  :key="course.name + course.start"
+                  class="course-item"
+                  :class="courseColor(course.name)"
+                  :title="`${course.name} ${course.schedule} ${course.location}`"
+                >
+                  <strong class="course-name">{{ course.name }}</strong>
+                  <span class="course-meta">{{ course.location }}</span>
+                </span>
+              </td>
+            </template>
           </tr>
         </tbody>
       </table>
@@ -264,6 +284,7 @@ watch(() => props.ready, startSync)
     <p class="note">
       课表来自教务处系统，与作业共用同一套统一身份认证，登录一次即可。
       数据按周缓存在本设备，切换周次不需要联网。
+      节次时间两行：京 = 北京时间，琼 = 海南时间（海南校区作息，上午相同、下午起略晚）。
       <span v-if="savedAtText">上次同步：{{ savedAtText }}。</span>
     </p>
   </section>
@@ -549,7 +570,7 @@ h2 {
 }
 
 .corner {
-  width: 3.75rem;
+  width: 4.6rem;
 }
 
 .period {
@@ -569,8 +590,27 @@ h2 {
   white-space: nowrap;
 }
 
+.period-time {
+  display: block;
+  color: var(--muted);
+  font-size: 0.625rem;
+  white-space: nowrap;
+}
+
+/* 海南时刻比北京弱一档：主时间线是教务的北京时刻，琼行只是对照 */
+.period-time-hn {
+  opacity: 0.75;
+}
+
 .cell {
   height: 3.25rem;
+}
+
+/* 跨节课程格：rowspan 铺满 start..end 后，唯一的课程卡撑满整格高度，
+   视觉上「这节课占满全部时间」；并列多卡时保持自然高度不硬撑。 */
+.cell-course .course-item:only-child {
+  height: 100%;
+  box-sizing: border-box;
 }
 
 /* 课程卡：同名课程固定一色（courseColor 哈希分配），左缘用同系强色 */
@@ -584,7 +624,7 @@ h2 {
   line-height: 1.4;
 }
 
-.course + .course {
+.course-item + .course-item {
   margin-top: 0.25rem;
 }
 
@@ -594,16 +634,6 @@ h2 {
 
 .course-meta {
   color: var(--muted);
-}
-
-/* 延续节次：同色系淡色竖条，表示课程从上一节延续而来 */
-.course-continued {
-  display: block;
-  height: calc(100% - 0.3rem);
-  min-height: 0.75rem;
-  border-radius: 0.375rem;
-  background: var(--c-strong);
-  opacity: 0.35;
 }
 
 .note {
