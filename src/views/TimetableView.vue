@@ -62,6 +62,14 @@ async function submitJwglPassword() {
   }
 }
 
+/** 降级黄条文案按登录路径说话：企微识别只建云邮会话（教务不支持免密），
+ *  密码登录降级才是「密码不同/教务不可用」。两条路的出路同为补填教务密码。 */
+const degradedNotice = computed(() => auth.viaWecom.value
+  ? '企业微信识别只建立了云邮（作业）会话。课表需要教务会话，而教务系统不支持免密识别——'
+    + '补填一次教务密码即可（通常与统一身份密码相同）。作业功能不受影响。'
+  : '本次登录没有建立教务会话：可能是教务系统密码与统一身份密码不同，'
+    + '也可能是教务系统暂时不可用。作业功能不受影响。')
+
 const periods = computed(() => timetable.activeWeek.value?.periods ?? [])
 const days = computed(() => timetable.activeWeek.value?.days ?? [])
 const weeks = computed(() => timetable.weeks.value)
@@ -249,12 +257,9 @@ watch(() => props.ready, startSync)
       <button class="notice-action" type="button" @click="timetable.retry()">重试</button>
     </div>
 
-    <!-- 已登录但教务侧不可用（降级登录/企微登录）：黄条说明 + 补填教务密码出路 -->
+    <!-- 已登录但教务侧不可用（降级登录/企微登录）：黄条按登录路径说明 + 补填出路 -->
     <div v-if="!ready && degraded" class="notice notice-warn" role="status">
-      <span class="notice-text">
-        本次登录没有建立教务会话：可能是教务系统密码与统一身份密码不同，
-        也可能是教务系统暂时不可用。作业功能不受影响。
-      </span>
+      <span class="notice-text">{{ degradedNotice }}</span>
       <button class="notice-action" type="button" @click="passwordFormOpen = !passwordFormOpen">
         {{ passwordFormOpen ? '收起' : '补填教务密码' }}
       </button>

@@ -1,4 +1,4 @@
-import { computed, ref } from 'vue'
+import { computed, readonly, ref } from 'vue'
 import { ApiError } from '../api/client.js'
 import {
   checkJwglSession,
@@ -11,6 +11,9 @@ import {
 
 const UCLOUD_KEY = 'bupt-week-ucloud-auth'
 const JWGL_KEY = 'bupt-week-jwgl-auth'
+// 本次云邮登录态是否来自企微自动识别。企微流程只建立云邮会话（教务系统
+// 不支持免密识别），课表页的黄条要按这个事实说话，而不是猜「密码不同」。
+const WECOM_LOGIN_KEY = 'bupt-week-via-wecom'
 
 /**
  * 统一登录态。
@@ -21,6 +24,18 @@ const JWGL_KEY = 'bupt-week-jwgl-auth'
  */
 const ucloud = ref(read(UCLOUD_KEY))
 const jwgl = ref(read(JWGL_KEY))
+const viaWecom = ref((() => {
+  try { return localStorage.getItem(WECOM_LOGIN_KEY) === '1' } catch { return false }
+})())
+
+function writeWecomFlag(on) {
+  try {
+    if (on) localStorage.setItem(WECOM_LOGIN_KEY, '1')
+    else localStorage.removeItem(WECOM_LOGIN_KEY)
+  } catch {
+    // 写不进就算了，本次会话内 viaWecom ref 仍然正确
+  }
+}
 
 function read(key) {
   try {
@@ -47,6 +62,9 @@ if (typeof window !== 'undefined') {
   window.addEventListener('storage', (event) => {
     if (event.key === UCLOUD_KEY || event.key === null) ucloud.value = read(UCLOUD_KEY)
     if (event.key === JWGL_KEY || event.key === null) jwgl.value = read(JWGL_KEY)
+    if (event.key === WECOM_LOGIN_KEY || event.key === null) {
+      try { viaWecom.value = localStorage.getItem(WECOM_LOGIN_KEY) === '1' } catch { /* 保持原值 */ }
+    }
   })
 }
 
@@ -88,6 +106,8 @@ export const auth = {
   loggedIn: computed(() => Boolean(ucloud.value || jwgl.value)),
   username: computed(() => ucloud.value?.username || jwgl.value?.username || ''),
   realName: computed(() => ucloud.value?.realName || ''),
+  /** 本次云邮登录是否来自企微自动识别（课表黄条按此说话） */
+  viaWecom: readonly(viaWecom),
   /** 云邮（作业）是否可用 */
   ucloudReady: computed(() => Boolean(ucloud.value)),
   /** 教务处（课表）是否可用 */
@@ -95,6 +115,10 @@ export const auth = {
 
   async signIn(username, password) {
     const data = await login(username, password)
+
+    // 学号密码登录不是企微识别：先清掉可能残留的企微标记，黄条按密码路径说话
+    viaWecom.value = false
+    writeWecomFlag(false)
 
     ucloud.value = {
       sessionId: data.ucloud.sessionId,
@@ -130,6 +154,8 @@ export const auth = {
       realName: data.realName || '',
       expiresAt: data.expiresAt,
     }
+    viaWecom.value = true
+    writeWecomFlag(true)
     write(UCLOUD_KEY, ucloud.value)
   },
 
@@ -195,6 +221,8 @@ export const auth = {
     const jwglId = jwgl.value?.sessionId
     ucloud.value = null
     jwgl.value = null
+    viaWecom.value = false
+    writeWecomFlag(false)
     write(UCLOUD_KEY, null)
     write(JWGL_KEY, null)
 

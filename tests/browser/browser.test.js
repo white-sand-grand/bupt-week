@@ -627,13 +627,23 @@ test('企微回流：hash 带回的 sessionId 落地成登录态，且 URL 被�
     // 后端 callback 成功后的落地形态：fragment 里有路由路径 + 参数
     await page.goto(`${APP_ORIGIN}/#/login?wecom=ok&sessionId=uc-sid`, { waitUntil: 'networkidle' })
 
-    // 登录态建立：面板收起、顶栏出姓名、localStorage 落下标准形状
+    // 会话真的建立：面板收起、顶栏出姓名、localStorage 落下标准形状
     await page.waitForFunction(() => document.querySelectorAll('.panel').length === 0)
     assert.match(await page.textContent('.topbar-auth'), /张三/)
     assert.deepEqual(
       await page.evaluate(() => JSON.parse(localStorage.getItem('bupt-week-ucloud-auth'))),
       STORED_UCLOUD,
     )
+
+    // 企微路径标记：课表黄条按「企微只建云邮会话」说话，而不是猜密码不同
+    assert.equal(await page.evaluate(() => localStorage.getItem('bupt-week-via-wecom')), '1')
+    await page.waitForSelector('.view .notice-warn')
+    assert.match(await page.textContent('.view .notice-warn'), /企业微信识别只建立了云邮/)
+
+    // 退出登录后标记一并清掉，下次学号密码登录黄条回到密码路径的文案
+    await page.click('.topbar-auth .link-button')
+    await page.waitForSelector(`${panel} .login-form`)
+    assert.equal(await page.evaluate(() => localStorage.getItem('bupt-week-via-wecom')), null)
 
     // sessionId 不能留在地址栏/历史里
     assert.equal(page.url().includes('sessionId='), false, 'sessionId 不该留在地址栏')
