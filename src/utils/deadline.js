@@ -32,6 +32,26 @@ export function getDaysLeft(deadline, now = Date.now()) {
   return Math.floor((endTime - now) / 86400000)
 }
 
+/** 进度条窗口：begin 缺失时按「临近截止」语义回退 7 天（与分级阈值一致）。 */
+const PROGRESS_WINDOW_MS = 7 * 86400000
+
+/**
+ * 提交进度（0..1）：从发布到截止走了多远。
+ *
+ * 学校的作业列表接口【实测 2026-10-24，38/38 条】assignmentBeginTime 全为空，
+ * 所以起点缺失时回退成「截止前 7 天」的窗口——正好对齐分级阈值（7 天进入
+ * 临近截止），进度条从进入 warning 带开始填充，到截止铺满，语义自洽。
+ * 起点有值就用真值；截止非法或区间不合法（end <= start）返回 null，不画。
+ */
+export function deadlineProgress(beginTime, deadline, now = Date.now()) {
+  const end = beijingTimestamp(deadline)
+  if (Number.isNaN(end)) return null
+  const start = beijingTimestamp(beginTime)
+  const begin = Number.isNaN(start) ? end - PROGRESS_WINDOW_MS : start
+  if (end <= begin) return null
+  return Math.min(1, Math.max(0, (now - begin) / (end - begin)))
+}
+
 function getDeadlineLevel(daysLeft, isCompleted) {
   if (isCompleted) return 'submitted'
   if (daysLeft === null) return 'normal'

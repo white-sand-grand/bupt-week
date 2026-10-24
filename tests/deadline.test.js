@@ -2,6 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   beijingTimestamp,
+  deadlineProgress,
   getDaysLeft,
   groupByCourse,
   isRecordCompleted,
@@ -31,6 +32,34 @@ test('getDaysLeft：以北京时间为基准的天数差', () => {
   assert.equal(getDaysLeft('2026-10-25 23:59:00', NOW), 1)
   assert.equal(getDaysLeft('2026-10-23 23:59:00', NOW), -1)
   assert.equal(getDaysLeft('', NOW), null)
+})
+
+test('deadlineProgress：有发布时间时按真实区间算，夹在 0..1', () => {
+  // 10-18 12:00 发布 → 10-24 12:00 截止，正好走了 6/7 天 = 6/7
+  assert.ok(Math.abs(deadlineProgress('2026-10-18 12:00:00', '2026-10-25 12:00:00', NOW) - 6 / 7) < 1e-9)
+  // 发布在将来：夹到 0
+  assert.equal(deadlineProgress('2026-10-30 12:00:00', '2026-11-06 12:00:00', NOW), 0)
+  // 已过期：夹到 1
+  assert.equal(deadlineProgress('2026-10-10 12:00:00', '2026-10-12 12:00:00', NOW), 1)
+})
+
+test('deadlineProgress：发布时间缺失时回退 7 天窗口（实测 38/38 条 beginTime 为空）', () => {
+  // 截止 7 天后 → 0（还没进入临近截止带）
+  assert.equal(deadlineProgress('', '2026-10-31 12:00:00', NOW), 0)
+  // 截止 3 天后 → 已填 4/7
+  assert.ok(Math.abs(deadlineProgress(undefined, '2026-10-27 12:00:00', NOW) - 4 / 7) < 1e-9)
+  // 截止就是现在 → 1
+  assert.equal(deadlineProgress(undefined, '2026-10-24 12:00:00', NOW), 1)
+})
+
+test('deadlineProgress：垃圾输入返回 null，不画条', () => {
+  assert.equal(deadlineProgress('', '', NOW), null)
+  assert.equal(deadlineProgress('2026-10-01 12:00:00', 'not a date', NOW), null)
+  // 截止早于发布：区间不合法
+  assert.equal(deadlineProgress('2026-10-10 12:00:00', '2026-10-09 12:00:00', NOW), null)
+  // 日历上不存在的截止日期（2 月 30 日，beijingTimestamp 显式拒收）→ 不画；
+  // 但垃圾「发布时间」走 7 天回退是设计行为，不算垃圾输入
+  assert.equal(deadlineProgress('2026-10-01 12:00:00', '2026-02-30 12:00:00', NOW), null)
 })
 
 test('isRecordCompleted：submitTime 优先，assignmentStatus 次之（99=未提交）', () => {

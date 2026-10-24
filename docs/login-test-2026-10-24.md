@@ -94,3 +94,16 @@
 ## 工具伪影备注（非应用问题）
 
 IAB 的 Playwright locator `fill`/`click`/`press` 在此页面上无法触发 Vue 表单提交（疑似未派发框架依赖的 input/事件，表单被 required 拦截，后端零请求）；改用 CUA 真实键鼠事件路径（点击坐标 + 全选重打）后一次成功。今后在本机 IAB 里做表单类交互测试，优先用 CUA 路径。
+
+---
+
+# 深链白屏诊断与作业页改进（2026-10-24，同日追加）
+
+用户实测「去交作业」跳转后白屏。逐层排查结论（完整证据链见 api-reference.md §3.2.1）：
+
+1. 深链本身会先被云邮 SPA 弹到 CAS 登录页（文档假设成立），坏的是 **CAS 桌面皮肤**：其现代登录 UI 载体 `/authserver/cas/login-normal.html` 从浏览器发起**稳定 400**（Edge/Chromium/Electron 全复现；curl/Node fetch 同 URL 全 200，H1.1/H2 均排除，疑与浏览器特有请求头组合有关）。iframe 加载失败 → 整页只剩一个空 iframe → 白屏。
+2. `dev=1`（CAS init.js 自留开关）跳过 iframe 直显老式内联表单，实测 3/3 稳定渲染。
+3. 微信 UA 在加载皮肤前就被 CAS 自动转企微识别（mc-wx），**微信内不受影响**，坏的只是桌面浏览器路径。
+4. 三个备选方案实测证伪：§3.4 query 鉴权（详情页路由照样被守卫弹走）、深链作 service + course.html?ticket（SPA 不消费 ticket）、courseHomePage 桥接（同样被弹）。根路径 `/?ticket=` 有网关层交换（实测发起 oauth/token）。
+5. 落地：`去交作业` 改为经 `authserver/login?service=<完整深链>&dev=1` 入口。已登录云邮的浏览器被 CAS 自动直通到作业；未登录的登录后落在云邮首页，回本页再点一次即达。
+6. 同批改进：作业卡片截止时间下新增细长进度条（4px，颜色复用紧急度色条，30s 时钟驱动）。起点数据实测 38/38 条 `assignmentBeginTime` 为空，故 `deadlineProgress` 在起点缺失时回退 7 天窗口（对齐「临近截止」分级阈值）。

@@ -1046,7 +1046,7 @@ test('作业：按紧急度排序、按课程分组、状态徽标正确', async
   }
 })
 
-test('作业：展开懒加载附件，「去交作业」深链指向该作业详情页', async () => {
+test('作业：展开懒加载附件，「去交作业」经 CAS dev=1 入口指向该作业', async () => {
   const page = await browser.newPage()
   try {
     await loginAndOpenAssignments(page)
@@ -1070,14 +1070,44 @@ test('作业：展开懒加载附件，「去交作业」深链指向该作业�
     const attachment = await page.textContent('.attachment-list li button')
     assert.match(attachment, /lab0-handout\.pdf/)
 
-    // 深链：§3.2 的详情页 URL，参数就是这份作业的 ID，且不带 refresh_token
+    // 入口链接：CAS 登录页 + dev=1（绕开桌面皮肤 iframe 的 400 白屏，2026-10-24 实测），
+    // 深链整体作 service——浏览器里已有云邮会话的人会被 CAS 自动直通到这份作业
     const href = await page.getAttribute('.go-submit', 'href')
+    assert.match(href, /^https:\/\/auth\.bupt\.edu\.cn\/authserver\/login\?service=/)
+    assert.match(href, /&dev=1$/)
+    const service = decodeURIComponent(new URL(href).searchParams.get('service'))
     assert.equal(
-      href,
+      service,
       'https://ucloud.bupt.edu.cn/uclass/course.html#/student/assignmentDetails_fullpage?activeTabName=first&assignmentId=hw-lab0',
     )
-    assert.equal(href.includes('refresh_token'), false, '深链不该携带长效凭证')
-    assert.equal(href.includes('studentAssignmentListPage'), false, '不能深链列表页（site-id cookie 缺口）')
+    assert.equal(href.includes('refresh_token'), false, '入口不该携带长效凭证')
+    assert.equal(service.includes('studentAssignmentListPage'), false, '不能深链列表页（site-id cookie 缺口）')
+  } finally {
+    await page.close()
+  }
+})
+
+test('作业：截止进度条按剩余时间填充、按紧急度着色，已提交不画', async () => {
+  const page = await browser.newPage()
+  try {
+    await loginAndOpenAssignments(page)
+    await page.waitForSelector('.card')
+
+    // 只有未提交的卡有进度条：lab0（已逾期，铺满红色）+ 实验一（剩 20h，danger 色 88%）
+    assert.equal(await page.locator('.deadline-track').count(), 2)
+
+    const fills = await page.locator('.deadline-fill').all()
+    const firstWidth = await fills[0].evaluate((el) => el.style.width)
+    const secondWidth = await fills[1].evaluate((el) => el.style.width)
+    // 逾期：夹到 100%
+    assert.equal(firstWidth, '100%')
+    assert.equal(await fills[0].getAttribute('class'), 'deadline-fill bar-overdue')
+    // 7 天窗口回退：剩 20h → (168-20)/168 ≈ 88%
+    assert.equal(secondWidth, '88%')
+    assert.equal(await fills[1].getAttribute('class'), 'deadline-fill bar-danger')
+
+    // 进度条在时间行下方、卡内（细长装饰条，读屏不可见）
+    assert.equal(await page.locator('.deadline-track[aria-hidden="true"]').count(), 2)
   } finally {
     await page.close()
   }

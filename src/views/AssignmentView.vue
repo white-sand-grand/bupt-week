@@ -1,9 +1,10 @@
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { auth } from '../composables/auth.js'
 import { assignmentsStore } from '../composables/assignments.js'
 import { downloadResource } from '../api/files.js'
-import { buildAssignmentUrl } from '../utils/assignment-url.js'
+import { buildAssignmentEntryUrl } from '../utils/assignment-url.js'
+import { deadlineProgress } from '../utils/deadline.js'
 import { formatUpdatedAt, beijingDateString } from '../utils/format.js'
 import { friendlyError } from '../utils/errors.js'
 
@@ -64,14 +65,30 @@ async function download(attachment) {
   }
 }
 
+/** 进度条的时间基准。它随分钟走，截止临近时填充和颜色才会自己动起来。 */
+const now = ref(Date.now())
+let progressClock = null
+
+/** 未提交的作业才有进度可言；已提交的返回 null（不画条）。 */
+function progressOf(assignment) {
+  if (assignment.isCompleted) return null
+  return deadlineProgress(assignment.beginTime, assignment.deadline, now.value)
+}
+
 function startLoad() {
   if (props.ready && assignmentsStore.state.value === 'idle') {
     assignmentsStore.load()
   }
 }
 
-onMounted(startLoad)
+onMounted(() => {
+  startLoad()
+  progressClock = setInterval(() => {
+    now.value = Date.now()
+  }, 30_000)
+})
 watch(() => props.ready, startLoad)
+onUnmounted(() => clearInterval(progressClock))
 
 const groups = computed(() => assignmentsStore.groups.value)
 </script>
@@ -136,6 +153,19 @@ const groups = computed(() => assignmentsStore.groups.value)
               <span class="badge" :class="LEVEL_CLASS[assignment.level]">{{ assignment.status }}</span>
               <span v-if="deadlineLabel(assignment)" class="deadline">{{ deadlineLabel(assignment) }}</span>
             </span>
+            <!-- 截止进度：细长一条，颜色与左侧色条同源（颜色即紧急度）。装饰性——
+                 语义已由徽标和时间文本承载，进度条只是视觉冗余，对读屏隐藏。 -->
+            <span
+              v-if="progressOf(assignment) !== null"
+              class="deadline-track"
+              aria-hidden="true"
+            >
+              <span
+                class="deadline-fill"
+                :class="LEVEL_BAR_CLASS[assignment.level]"
+                :style="{ width: Math.round(progressOf(assignment) * 100) + '%' }"
+              ></span>
+            </span>
           </button>
 
           <div v-if="assignmentsStore.expanded.value[assignment.id]" class="card-detail">
@@ -169,14 +199,15 @@ const groups = computed(() => assignmentsStore.groups.value)
               </ul>
             </template>
 
-            <!-- 新标签打开云邮提交页。无云邮会话时会先落 CAS 登录页，登一次即回（§3.2 补充） -->
+            <!-- 经 CAS dev=1 入口：桌面浏览器直开深链会撞上 CAS 皮肤的 400 白屏
+                 （见 utils/assignment-url.js 注释），已登录的人则会被自动直通 -->
             <a
               class="go-submit"
-              :href="buildAssignmentUrl(assignment.id)"
+              :href="buildAssignmentEntryUrl(assignment.id)"
               target="_blank"
               rel="noopener"
             >去交作业</a>
-            <p class="detail-hint">在云邮页面提交。若提示登录，登一次统一身份认证即可回到这份作业。</p>
+            <p class="detail-hint">在云邮页面提交。已登录过云邮会直达这份作业；首次使用会先到统一身份认证登录页，登录后落在云邮首页——回到本页再点一次「去交作业」即可。</p>
           </div>
         </article>
       </section>
@@ -363,6 +394,30 @@ h3 {
 .bar-normal { background: var(--brand-500); }
 .bar-submitted { background: #16a34a; }
 .bar-missed { background: #94a3b8; }
+
+/* 截止进度条：细长（4px）一条，铺在时间行下方，颜色复用上面的 level 色条。
+   track 用暗一档的底色兜住未填充部分，暗色主题下也够对比。 */
+.deadline-track {
+  display: block;
+  height: 4px;
+  margin-top: 0.5rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, currentColor 12%, transparent);
+  overflow: hidden;
+}
+
+@supports not (background: color-mix(in srgb, red 10%, blue)) {
+  .deadline-track {
+    background: var(--surface-sunken);
+  }
+}
+
+.deadline-fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  transition: width 0.3s ease;
+}
 
 .card-main {
   display: grid;
