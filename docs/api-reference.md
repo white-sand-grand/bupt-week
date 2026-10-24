@@ -544,6 +544,8 @@ Referer: https://jwgl.bupt.edu.cn/jsxsd/framework/xsMain_bjyddx.jsp
 
 ```
 POST /api/auth/login           { username, password }  → 一次登两系统（含限速）
+                                                         教务不可达时降级：jwgl=null + jwglMessage，
+                                                         云邮会话照常建立（jwglVia='unavailable'）
 POST /api/ucloud/session       { sessionId }           → 校验并静默续期
 POST /api/ucloud/logout        { sessionId }
 POST /api/ucloud/assignments   { sessionId }           → 全量作业 records 透传
