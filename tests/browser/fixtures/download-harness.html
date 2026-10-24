@@ -12,10 +12,12 @@
     -->
     <h1>下载链路验证</h1>
     <button id="download" type="button">下载</button>
+    <button id="download-progress" type="button">带进度下载</button>
+    <button id="resolve" type="button">解析地址</button>
     <p id="result">待触发</p>
 
     <script type="module">
-      import { downloadFile } from '/src/api/files.js'
+      import { downloadFile, resolveResourceDownload } from '/src/api/files.js'
 
       const params = new URLSearchParams(location.search)
       const result = document.getElementById('result')
@@ -27,6 +29,44 @@
           result.textContent = 'ok'
         } catch (error) {
           result.textContent = `error: ${error.message}`
+        }
+      })
+
+      // 流式读取路径：最后一次 onProgress 应该报满（received === total > 0）。
+      // total 为 null 说明 Content-Length 没透传到，进度条就算不出百分比。
+      document.getElementById('download-progress').addEventListener('click', async () => {
+        result.textContent = '下载中'
+        let last = null
+        try {
+          await downloadFile(params.get('url'), params.get('name'), {
+            onProgress: (progress) => { last = progress },
+          })
+          result.textContent = `progress: ${JSON.stringify(last)}`
+        } catch (error) {
+          result.textContent = `error: ${error.message}`
+        }
+      })
+
+      // 拦下 fetch 记下请求体再放行假响应：验证的是真实 files.js 发出的
+      // body 形状——服务端要求 sessionId 在请求体里，漏发就是永远 401。
+      document.getElementById('resolve').addEventListener('click', async () => {
+        result.textContent = '解析中'
+        const original = window.fetch
+        let captured = null
+        window.fetch = async (input, init) => {
+          captured = JSON.parse(init.body)
+          return new Response(
+            JSON.stringify({ success: true, data: { fileUrl: '/file/ucloud/document/a.pdf?sig=1' } }),
+            { headers: { 'Content-Type': 'application/json' } },
+          )
+        }
+        try {
+          await resolveResourceDownload('sid-from-harness', 'res-1')
+          result.textContent = `body: ${JSON.stringify(captured)}`
+        } catch (error) {
+          result.textContent = `error: ${error.message}`
+        } finally {
+          window.fetch = original
         }
       })
     </script>

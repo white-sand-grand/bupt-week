@@ -79,6 +79,18 @@ test('normalizeProxyResponse：重建响应体可读，且丢掉 content-length 
   assert.equal(await result.text(), 'hello world')
 })
 
+test('normalizeProxyResponse：无编码时保留 content-length（前端进度条靠它算百分比）', async () => {
+  const original = new Response('hello world', {
+    status: 200,
+    headers: { 'Content-Length': '11', 'Content-Type': 'application/pdf' },
+  })
+
+  const result = normalizeProxyResponse(original, corsHeadersFor('https://example.github.io', ALLOWED))
+
+  assert.equal(result.headers.get('content-length'), '11')
+  assert.equal(await result.text(), 'hello world')
+})
+
 test('normalizeProxyResponse：204 / 304 重建时不能带 body', () => {
   const original = new Response(null, {
     status: 204,

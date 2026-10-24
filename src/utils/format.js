@@ -31,3 +31,20 @@ export function formatUpdatedAt(iso, now = new Date()) {
   const [, month, dayOfMonth] = day.split('-')
   return `${Number(month)}月${Number(dayOfMonth)}日 ${time}`
 }
+
+/**
+ * 字节数 → 「1.5 MB」这样的可读尺寸，下载进度展示用。
+ * 满 10 进一位小数（9.8 MB / 75 MB）；非法值返回空串，宁可不显示。
+ */
+export function formatBytes(bytes) {
+  if (!Number.isFinite(bytes) || bytes < 0) return ''
+  if (bytes < 1024) return `${bytes} B`
+  const units = ['KB', 'MB', 'GB', 'TB']
+  let value = bytes
+  let index = -1
+  do {
+    value /= 1024
+    index += 1
+  } while (value >= 1024 && index < units.length - 1)
+  return `${value >= 10 ? Math.round(value) : value.toFixed(1)} ${units[index]}`
+}

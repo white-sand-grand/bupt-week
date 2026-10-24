@@ -41,9 +41,12 @@ function isAdmitted(request, allowedOrigins, ownOrigin) {
   return true
 }
 
-// 重建 Response 时要一并丢掉的长度/编码类头部：undici 已按 content-encoding
-// 解压过 body，保留原始的 content-length 会让浏览器按压缩尺寸截断。
-const DROP_ON_REBUILD = ['content-encoding', 'content-length', 'transfer-encoding']
+// 重建 Response 时要丢掉的传输类头部。transfer-encoding 永远丢（undici 已
+// dechunk）；content-encoding 永远丢——undici 已按它解压过 body，保留头会让
+// 浏览器二次解压；content-length 只在上游带编码时丢（解压后长度变了，保留
+// 会让浏览器按压缩尺寸截断）。二进制附件没有编码，长度是准的——保留它，
+// 前端的下载进度条才能算出百分比。
+const DROP_ON_REBUILD = ['content-encoding', 'transfer-encoding']
 
 // 附件可能是几百 MB 的课件，30s 只够建连不够传完，放宽到 120s（与云邮前端一致）。
 const UPSTREAM_TIMEOUT_MS = 120_000
@@ -67,6 +70,7 @@ export function normalizeProxyResponse(response, extraHeaders = {}) {
   if (upstreamCors.length === 0 && forced.length === 0) return response
 
   for (const name of upstreamCors) headers.delete(name)
+  if (headers.has('content-encoding')) headers.delete('content-length')
   for (const name of DROP_ON_REBUILD) headers.delete(name)
   for (const [name, value] of forced) headers.set(name, value)
 

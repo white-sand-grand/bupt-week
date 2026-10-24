@@ -2,11 +2,10 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { auth } from '../composables/auth.js'
 import { assignmentsStore } from '../composables/assignments.js'
-import { downloadResource } from '../api/files.js'
+import { downloadsStore } from '../composables/downloads.js'
 import { buildAssignmentUrl } from '../utils/assignment-url.js'
 import { deadlineProgress, formatCountdown } from '../utils/deadline.js'
 import { formatUpdatedAt, beijingDateString } from '../utils/format.js'
-import { friendlyError } from '../utils/errors.js'
 
 const props = defineProps({
   /** 云邮登录态是否就绪。 */
@@ -38,10 +37,12 @@ const LEVEL_CARD_CLASS = {
   danger: 'card-danger',
 }
 
-const downloadErrors = ref({})
-
 /** 「更新于 X」：数据新旧可感知。 */
 const savedAtText = computed(() => formatUpdatedAt(assignmentsStore.savedAt.value))
+
+// ── 附件下载（状态与文案助手都在 downloadsStore：切视图重挂载也不丢）──
+
+/** 附件行内的状态文案与进度：见 composables/downloads.js hintFor/progressRatioFor。 */
 
 /** 截止时间的口语化表述：今天/明天直接点名，其余落回「月/日 时:分」。
  *  deadline 是无时区的北京时间墙上钟，因此也按北京日期比较；
@@ -54,15 +55,6 @@ function deadlineLabel(assignment) {
   if (date === beijingDateString(0)) return `今天 ${time} 截止`
   if (date === beijingDateString(1)) return `明天 ${time} 截止`
   return `${date.slice(5).replace('-', '/')} ${time} 截止`
-}
-
-async function download(attachment) {
-  try {
-    await downloadResource(attachment.resourceId, attachment.resourceName)
-  } catch (error) {
-    // 网络黑话（Failed to fetch）换成人话，附上重试方式（再点一次即可）
-    downloadErrors.value[attachment.resourceId] = friendlyError(error)
-  }
 }
 
 /** 进度条的时间基准。它随分钟走，截止临近时填充和颜色才会自己动起来。 */
@@ -205,14 +197,28 @@ const groups = computed(() => assignmentsStore.groups.value)
               </p>
               <ul v-else class="attachment-list">
                 <li v-for="attachment in assignmentsStore.attachments.value[assignment.id]" :key="attachment.resourceId">
-                  <button class="link-button" type="button" @click="download(attachment)">
+                  <!-- 下载中禁用：同一附件不允许叠两份下载（防连点在 store 里，这里只是可见的收口） -->
+                  <button
+                    class="link-button"
+                    type="button"
+                    :disabled="downloadsStore.isBusy(attachment.resourceId)"
+                    @click="downloadsStore.start(attachment.resourceId, attachment.resourceName)"
+                  >
                     <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
                       <path d="M8 2.5v7m0 0L5.2 6.7M8 9.5l2.8-2.8M3.5 12.5h9" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
                     </svg>
                     <span>{{ attachment.resourceName }}</span>
                   </button>
-                  <span v-if="downloadErrors[attachment.resourceId]" class="detail-hint">
-                    {{ downloadErrors[attachment.resourceId] }}
+                  <span v-if="downloadsStore.hintFor(attachment.resourceId)" class="detail-hint download-hint" aria-live="polite">
+                    {{ downloadsStore.hintFor(attachment.resourceId) }}
+                  </span>
+                  <!-- 进度条与截止进度同款（deadline-track）：同一套视觉语言。
+                       总大小未知时只有文案，不画条假装精确。 -->
+                  <span v-if="downloadsStore.progressRatioFor(attachment.resourceId) !== null" class="deadline-track" aria-hidden="true">
+                    <span
+                      class="deadline-fill bar-normal"
+                      :style="{ width: Math.round(downloadsStore.progressRatioFor(attachment.resourceId) * 100) + '%' }"
+                    ></span>
                   </span>
                 </li>
               </ul>
@@ -577,8 +583,19 @@ h3 {
   border-radius: var(--radius-sm);
 }
 
-.link-button:hover {
+.link-button:hover:not(:disabled) {
   text-decoration: underline;
+}
+
+/* 在途下载：视觉上明确「按了没用了」，等这轮结束自动恢复 */
+.link-button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+/* 状态文案缩进对齐文件名（图标宽 + 间距），别顶着行首 */
+.download-hint {
+  padding-left: 1.4rem;
 }
 
 @media (prefers-color-scheme: dark) {
