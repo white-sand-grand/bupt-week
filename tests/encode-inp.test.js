@@ -5,7 +5,7 @@ import { encodeInp } from '../server/services/jwgl.js'
 const KEY = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/='
 
 /**
- * encodeInp 从 MYUCLOUD 的 Python 版 auto_evalued 原样移植（diff 过，逐字一致）。
+ * encodeInp：教务处登录协议的密码编码（正方教务前端协议，登录接口点名要它）。
  *
  * 实测结论：它就是一个手写的**标准 base64**——65 个字符的 key 只是为了把下标 64
  * 映射到 '='，省掉单独写 padding 常量。位运算和标准算法完全一致。
@@ -15,7 +15,7 @@ const KEY = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/='
  * 才会分叉——而 code unit > 255 时 enc1 会超出 63，KEY[enc1] 是 undefined。
  * 教务处要的就是这个行为，别去"修"它。
  *
- * 下面这些断言的真实用途是抓转录错误：位运算抄错一位，立刻和标准 base64 分叉。
+ * 下面这些断言的真实用途是抓转录错误：位运算写错一位，立刻和标准 base64 分叉。
  */
 test('encodeInp：ASCII 输入与标准 base64 完全一致', () => {
   for (const value of ['a', 'ab', 'abc', 'abcd', 'hello world', '20210001', '2021001234', 'p@ss w0rd!#']) {

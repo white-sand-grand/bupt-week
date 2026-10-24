@@ -12,7 +12,7 @@ function json(body, status = 200) {
  * 课表解析器与路由。
  *
  * fixture 按 docs/api-reference.md §4.2 的 DOM 结构构造（该节为【实测】）。
- * 解析器是从 MYUCLOUD 原样移植的，fail-loud 语义必须有测试钉住。
+ * 解析器是 fail-loud 语义：结构对不上必须抛错，这组测试负责钉住。
  */
 
 const MODE = 'ABCDEF0123456789ABCDEF0123456789'
@@ -94,6 +94,18 @@ test('parseTimetable：课程节次对不上节次表时抛错（fail-loud）', 
     <li>上课时间：[9]节</li><li>上课地点：未知</li>
   </ul></div>`
   assert.throws(() => parseTimetable(timetablePage({ courses: badCourse })), /时间格式无法识别/)
+})
+
+test('parseTimetable：课程卡缺 dayN 类名时抛错（fail-loud，不产出星期不明的课）', () => {
+  const noDay = `<div class="table-class"><h4>幽灵课</h4><ul>
+    <li>上课时间：[1]节</li><li>上课地点：未知</li>
+  </ul></div>`
+  assert.throws(() => parseTimetable(timetablePage({ courses: noDay })), /时间格式无法识别/)
+})
+
+test('parseTimetable：周次变量不是纯数字时抛错（fail-loud，不当第 0 周）', () => {
+  const html = timetablePage({ courses: COURSE_HTML }).replace(/var dqzc = '18';/, "var dqzc = 'week18x';")
+  assert.throws(() => parseTimetable(html), /缺少周次/)
 })
 
 test('parseTimetable：HTML 实体与多空格被清洗', () => {

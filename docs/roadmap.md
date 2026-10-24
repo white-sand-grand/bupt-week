@@ -55,7 +55,7 @@
 ### 已完成
 
 1. `services/ucloud.js`：CAS 三步登录（实验 A 成功则加密码直连作为首选，CAS 作 fallback）
-2. `services/jwgl.js`：`encodeInp` + 三步 Cookie 罐登录（从 MYUCLOUD 原样移植）
+2. `services/jwgl.js`：`encodeInp` + 三步 Cookie 罐登录
 3. `POST /api/ucloud/login`、`/api/jwgl/login`、`session`、`logout`
 4. 前端 `LoginPanel.vue` + `src/composables/auth.js`（导出 `jwglAuth` / `ucloudAuth` 两个实例）
 5. 错误信息带上 `stage`，前端直接展示 `msg`
