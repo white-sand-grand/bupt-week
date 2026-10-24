@@ -9,6 +9,16 @@ compatibility_date = "2025-01-01"
 [vars]
 # 允许跨域访问的前端来源，多个用逗号分隔。改成你自己的 Pages 地址。
 CORS_ORIGINS = "https://white-sand-grand.github.io"
+# 企微回流跳回前端的地址（带子路径，原样保留）。不配时 callback 只能靠
+# Referer cookie 推导，而跨域 Referer 只有 origin——丢掉 /bupt-week/ 基路径，
+# 回流会落在 Pages 根 404，表现为「企微识别失败」（2026-10-24 实测根因）。
+FRONTEND_URL = "https://white-sand-grand.github.io/bupt-week"
+
+# 班级功能数据（班级/成员/手动录入的作业）。与 SESSIONS 分开建 namespace，
+# 避免会话清理逻辑（按 expiresAt 判活）误伤班级数据。
+[[kv_namespaces]]
+binding = "CLASSES"
+id = "caf63daeb019431c923418f19e9addb7"
 
 # 会话命名空间：SESSIONS 的 KV（id 来自 wrangler kv namespace create）。
 # [[kv_namespaces]] 这一行是 TOML 表头，必须取消注释——只删 id 前面的注释
