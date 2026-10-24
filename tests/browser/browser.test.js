@@ -871,7 +871,7 @@ test('企微回流失败：失败原因说人话显示，URL 清干净且可手�
   // 黄条人话提示（含阶段名翻译与出路），而不是静默退回登录框
   await page.waitForSelector('.banner-warn')
   const banner = await page.textContent('.banner-warn')
-  assert.match(banner, /学校网关没有带回登录凭证/)
+  assert.match(banner, /登录凭证交换没有成功/)
   assert.match(banner, /学号密码/)
 
   // 错误参数不留在地址栏（history 里也不该有）

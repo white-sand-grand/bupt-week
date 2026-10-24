@@ -246,5 +246,8 @@ export async function casClientRedirect({ clientName, service, fetchImpl = fetch
     state = ''
   }
 
-  return { redirectUrl: location, state }
+  // 这次的匿名 CAS 会话（JSESSIONID 等）必须带回去：实测 CAS 的 TST state
+  // 绑定在发起 clientredirect 的会话上——换会话提交 code+state 只会得到登录
+  // 表单页，永远换不出票据（2026-10-24 真机 wecom-no-ticket 的根因）。
+  return { redirectUrl: location, state, cookies: joinCookies(response.headers) }
 }

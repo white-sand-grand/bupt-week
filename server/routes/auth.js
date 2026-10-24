@@ -380,10 +380,22 @@ export function createAuthRoutes({ getSessionStore, frontendUrl = '', allowedOri
    * 用户在微信里会被企业微信自动识别，无需再输学号密码。
    */
   routes.get('/auth/wecom/start', async (c) => {
-    const { redirectUrl, state } = await casClientRedirect({
+    const { redirectUrl, state, cookies: casCookies } = await casClientRedirect({
       clientName: CAS_CLIENTS.wecom,
       service: UCLOUD_SERVICE,
     })
+
+    // CAS 的 TST state 绑定在发起 clientredirect 的那个会话上（实测：拿同一个
+    // state 换个会话提交 code，CAS 只回登录表单，票据永远换不出来——这是
+    // 真机 wecom-no-ticket 的根因）。把这次匿名 CAS 会话按 state 键控暂存，
+    // callback 换票据时带回去；15 分钟 TTL，用完即删。里面没有用户身份
+    // （此时用户还没被 CAS 认识），keyed by CAS 签发的随机 state。
+    if (state) {
+      await getSessionStore().set(`wecomctx:${state}`, {
+        cookies: casCookies,
+        expiresAt: Date.now() + 900_000,
+      })
+    }
 
     const target = new URL(redirectUrl)
     target.searchParams.set('redirect', `${backendOrigin(c.req.url)}/api/auth/wecom/callback`)
@@ -441,12 +453,26 @@ export function createAuthRoutes({ getSessionStore, frontendUrl = '', allowedOri
       return redirectToFrontend(c, frontendUrl, '#/login?error=wecom-state', [expireStateCookie()])
     }
 
+    // 取回 start 时暂存的 CAS 会话（与这个 state 绑定的那个），用它换票据；
+    // 一次性使用，无论后面成败都删掉。取不到（过期/存储丢失）就空着试——
+    // 行为退回修复前，报错文案会指明这一步。
+    const store = getSessionStore()
+    const ctxKey = `wecomctx:${state}`
+    let casCookies = ''
+    try {
+      const ctx = await store.get(ctxKey)
+      if (ctx && typeof ctx.cookies === 'string') casCookies = ctx.cookies
+    } catch {
+      // 存储异常按没有上下文处理
+    }
+    await store.delete(ctxKey).catch(() => {})
+
     const loginUrl = `https://auth.bupt.edu.cn/authserver/login?client_name=${CAS_CLIENTS.wecom}`
       + `&code=${encodeURIComponent(code)}&state=${encodeURIComponent(state)}`
 
     let response
     try {
-      response = await fetch(loginUrl, withUserAgent({ redirect: 'manual' }))
+      response = await reuseCookies(fetch, casCookies)(loginUrl, withUserAgent({ redirect: 'manual' }))
     } catch {
       return redirectToFrontend(c, frontendUrl, '#/login?error=wecom-connect', [expireStateCookie()])
     }
@@ -462,14 +488,19 @@ export function createAuthRoutes({ getSessionStore, frontendUrl = '', allowedOri
     }
 
     if (!ticket) {
-      // 到这一步失败，最可能是 CAS 不认被改过的 redirect，或者 code 已过期
-      console.warn('[auth] 企业微信回调没拿到 ticket', { status: response.status, hasLocation: Boolean(location) })
+      // 修复会话绑定后仍走到这里：code 已过期，或 CAS 对这次交换另有要求。
+      // hadCasSession 标记能区分「没带会话」和「带了仍被拒」两种形态。
+      console.warn('[auth] 企业微信回调没拿到 ticket', {
+        status: response.status,
+        hasLocation: Boolean(location),
+        hadCasSession: Boolean(casCookies),
+      })
       return redirectToFrontend(c, frontendUrl, '#/login?error=wecom-no-ticket', [expireStateCookie()])
     }
 
     const ucloud = await loginUcloudWithTicket(ticket)
     const sessionId = newSessionId()
-    await getSessionStore().set(sessionId, { kind: 'ucloud', ...ucloud, createdAt: Date.now(), expiresAt: expiresAt() })
+    await store.set(sessionId, { kind: 'ucloud', ...ucloud, createdAt: Date.now(), expiresAt: expiresAt() })
 
     return redirectToFrontend(
       c,

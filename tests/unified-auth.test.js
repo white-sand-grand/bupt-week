@@ -722,3 +722,62 @@ test('wecom/callback：处理完（无论成败）清掉 state cookie，一次�
     '成功后应清掉 state cookie',
   )
 })
+
+test('GET /api/auth/wecom/start：CAS 会话按 state 键控暂存（换票据时回放）', async (t) => {
+  const { app, store } = makeApp()
+  t.mock.method(globalThis, 'fetch', async () => new Response(null, {
+    status: 302,
+    headers: {
+      Location:
+        'https://app.bupt.edu.cn/uc/api/oauth/index?response_type=code&appid=200210806102757400'
+        + '&state=TST-109420-8UngFvR',
+      'set-cookie': 'JSESSIONID=cas-anon-session; Path=/; HttpOnly',
+    },
+  }))
+
+  await app.request('/api/auth/wecom/start')
+
+  // 实测根因（2026-10-24 真机 wecom-no-ticket）：CAS 的 TST state 绑定在发起
+  // clientredirect 的会话上，换会话提交 code 只会拿到登录表单页
+  const ctx = await store.get('wecomctx:TST-109420-8UngFvR')
+  assert.ok(ctx, '应暂存与 state 绑定的 CAS 会话')
+  assert.match(ctx.cookies, /JSESSIONID=cas-anon-session/)
+  assert.ok(ctx.expiresAt > Date.now(), '15 分钟内有效')
+})
+
+test('GET /api/auth/wecom/callback：换票据带上暂存的 CAS 会话，用后即删', async (t) => {
+  const { app, store } = makeApp()
+  await store.set('wecomctx:TST-109420-abc', { cookies: 'JSESSIONID=keep-me', expiresAt: Date.now() + 900_000 })
+
+  let seenCookie = ''
+  t.mock.method(globalThis, 'fetch', async (url, options = {}) => {
+    const target = String(url)
+    if (target.includes('client_name=mc-wx') && target.includes('code=')) {
+      seenCookie = typeof options.headers?.get === 'function' ? options.headers.get('Cookie') : (options.headers?.Cookie || '')
+      return new Response(null, {
+        status: 302,
+        headers: { Location: 'https://ucloud.bupt.edu.cn?ticket=ST-from-wecom' },
+      })
+    }
+    if (target.includes('ykt-basics/oauth/token')) {
+      return json({ access_token: 'wecom-token', refresh_token: 'r', expires_in: 7199 })
+    }
+    if (target.includes('ykt-basics/info')) {
+      return json({ code: 200, success: true, data: { id: '2021001234', realName: '李四' } })
+    }
+    return json({})
+  })
+
+  const response = await app.request('/api/auth/wecom/callback?code=CODE123&state=TST-109420-abc', {
+    headers: {
+      Cookie:
+        'bupt-week-frontend=' + encodeURIComponent('http://127.0.0.1:5173')
+        + '; bupt-week-wecom-state=TST-109420-abc',
+    },
+  })
+
+  assert.equal(response.status, 302)
+  assert.match(response.headers.get('location'), /wecom=ok/)
+  assert.match(seenCookie, /JSESSIONID=keep-me/, '换票据必须带上 start 时的 CAS 会话')
+  assert.equal(await store.get('wecomctx:TST-109420-abc'), undefined, '上下文一次性使用')
+})
