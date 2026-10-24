@@ -23,6 +23,14 @@ dist/
 # 本地 agent 配置（团队共享的 settings.json 不受影响）
 .claude/settings.local.json
 
+# 内部文档（调研/计划/报告，不对外）。deployment.md 是 README 引用的
+# 自托管指南，必须保留公开。
+docs/*
+!docs/deployment.md
+
+# AI 助手的内部说明
+CLAUDE.md
+
 # 日志与系统垃圾
 *.log
 npm-debug.log*
