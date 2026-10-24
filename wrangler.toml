@@ -10,8 +10,9 @@ compatibility_date = "2025-01-01"
 # 允许跨域访问的前端来源，多个用逗号分隔。改成你自己的 Pages 地址。
 CORS_ORIGINS = "https://white-sand-grand.github.io"
 
-# 会话命名空间：先执行 `npx wrangler kv namespace create SESSIONS`，
-# 把返回的 id 填到下面，取消注释。
-# [[kv_namespaces]]
-# binding = "SESSIONS"
-# id = ""
+# 会话命名空间：SESSIONS 的 KV（id 来自 wrangler kv namespace create）。
+# [[kv_namespaces]] 这一行是 TOML 表头，必须取消注释——只删 id 前面的注释
+# 会让 binding/id 落进 [vars]，KV 绑定静默失效（2026-10-24 实测踩过）。
+[[kv_namespaces]]
+binding = "SESSIONS"
+id = "09f026b17cb2401da4b1c89bb3b43a23"
