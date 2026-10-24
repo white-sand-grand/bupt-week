@@ -2,7 +2,7 @@ import { Hono } from 'hono'
 import { ApiError, readJson } from '../http.js'
 import { resolveResourceDownload } from '../services/resources.js'
 import { fetchTimetable } from '../services/timetable.js'
-import { getAssignmentDetail, listAssignments } from '../services/assignments.js'
+import { getAssignmentDetail, listAssignmentsWithCourses } from '../services/assignments.js'
 
 /**
  * 本站自己的业务接口。
@@ -60,7 +60,7 @@ export function createApiRoutes({ getSessionStore }) {
       throw new ApiError(401, { stage: 'ucloud-auth', msg: '云邮登录已过期，请重新登录' })
     }
 
-    const records = await listAssignments({ token: session.accessToken })
+    const records = await listAssignmentsWithCourses({ token: session.accessToken, userId: session.userId })
     return c.json({ success: true, data: { assignments: records } })
   })
 

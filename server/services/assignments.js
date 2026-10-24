@@ -70,6 +70,75 @@ export async function listAssignments({ token, fetchImpl = fetch }) {
 }
 
 /**
+ * 课程列表（§2.2）。返回 [{ id, name }]，size=9999 一次拉全避免分页。
+ */
+async function listCourses({ token, userId, fetchImpl = fetch }) {
+  const body = await requestJson(
+    `${API_ORIGIN}/ykt-site/site/list/student/current?userId=${encodeURIComponent(userId)}`
+      + '&siteRoleCode=2&current=1&size=9999',
+    { headers: authHeaders(token) },
+    { stage: 'ucloud-assignments', what: '获取课程列表' },
+  )
+  const records = Array.isArray(body?.data?.records) ? body.data.records : []
+  return records
+    .map((course) => ({ id: String(course.id ?? ''), name: course.siteName || course.name || '' }))
+    .filter((course) => course.id && course.name)
+}
+
+/**
+ * 带课程名的作业列表。
+ *
+ * 作业列表接口【实测 2026-10-24，38/38 条】根本不带 siteId/siteName（文档 §2.3
+ * 早期的记录不成立），前端只能归到「未知课程」。课程名只能这样拿：先全量拉
+ * 保底（跨学期/已结课的作业也都在），再用课程列表逐课程拉一遍，按作业 ID 把
+ * siteId/siteName 回填到全量记录上。课程映射失败不致命——退化为无课程名，
+ * 和旧行为一致。
+ */
+export async function listAssignmentsWithCourses({ token, userId, fetchImpl = fetch }) {
+  const records = await listAssignments({ token, fetchImpl })
+
+  let courses = []
+  try {
+    courses = await listCourses({ token, userId, fetchImpl })
+  } catch {
+    return records
+  }
+  if (!courses.length) return records
+
+  // 逐课程并发拉，单课程失败只丢那一门的名字
+  const tagged = await Promise.allSettled(
+    courses.map((course) =>
+      requestJson(
+        `${API_ORIGIN}/ykt-site/work/student/list`,
+        {
+          method: 'POST',
+          headers: { ...authHeaders(token), 'Content-Type': 'application/json' },
+          body: JSON.stringify({ current: 1, size: 100, siteId: course.id }),
+        },
+        { stage: 'ucloud-assignments', what: '获取课程作业' },
+      ).then((body) => ({
+        course,
+        items: Array.isArray(body?.data?.records) ? body.data.records : [],
+      })),
+    ),
+  )
+
+  const byId = new Map(records.map((record) => [String(record.id ?? ''), record]))
+  for (const settled of tagged) {
+    if (settled.status !== 'fulfilled') continue
+    const { course, items } = settled.value
+    for (const item of items) {
+      const record = byId.get(String(item.id ?? ''))
+      if (record && !record.siteId) {
+        record.siteId = course.id
+        record.siteName = course.name
+      }
+    }
+  }
+  return records
+}
+
+/**
  * 单个作业详情：附件元数据在 data.assignmentResource
  * （resourceId / resourceName / resourceType，无下载链接——下载走 preview-url）。
  */

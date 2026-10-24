@@ -205,8 +205,8 @@ Content-Type: application/json
 |---|---|
 | `id` | 作业 ID，**做深链就用它** |
 | `assignmentTitle` | 标题 |
-| `assignmentBeginTime` / `assignmentEndTime` | 起止时间（**无时区的北京时间墙上钟**，按 Asia/Shanghai 解释） |
-| `siteId` / `siteName` | 所属课程 |
+| `assignmentBeginTime` / `assignmentEndTime` | 起止时间（**无时区的北京时间墙上钟**，按 Asia/Shanghai 解释；实测 begin 38/38 条为空） |
+| `siteId` / `siteName` | 所属课程（**2026-10-24 勘误：列表接口实测不返回这两个字段**——课程名要用 §2.2 的课程列表 + 按课程逐个拉列表建 ID→课程 映射回填，见 `server/services/assignments.js` 的 `listAssignmentsWithCourses`） |
 | `chapterName` | 章节 |
 | `status` | **作业自身状态**：2 = 进行中、3 = 已截止（与是否提交无关） |
 | `assignmentStatus` | **本人提交状态**：99 = 未提交、0 = 已提交、1 = 已批改 |

@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createBackend } from '../server/app.js'
 import { MemorySessionStore } from '../server/storage/memory.js'
-import { getAssignmentDetail, listAssignments } from '../server/services/assignments.js'
+import { getAssignmentDetail, listAssignments, listAssignmentsWithCourses } from '../server/services/assignments.js'
 
 /**
  * 作业服务与路由。接口形状按 docs/api-reference.md §2.3–2.4（【实测】）mock。
@@ -77,6 +77,71 @@ test('上游 401 映射为会话过期，而不是 502', async (t) => {
     () => listAssignments({ token: 'expired' }),
     (error) => error.status === 401 && error.stage === 'ucloud-auth',
   )
+})
+
+// ── 课程名映射（列表接口实测不带 siteId/siteName，见 docs/api-reference §2.3）──
+
+/** 按 URL 特征分流的作业上游 mock：全量列表 / 课程列表 / 按课程列表。 */
+function mockCourseUpstream({ coursesFail = false, oneCourseFails = false } = {}) {
+  return async (url, options = {}) => {
+    const target = String(url)
+    const body = options.body ? JSON.parse(options.body) : {}
+    if (target.includes('/work/student/list')) {
+      if (!body.siteId) {
+        return json({ code: 200, success: true, data: { records: [{ id: 'a1' }, { id: 'a2' }, { id: 'a3' }] } })
+      }
+      if (body.siteId === 'c1' && oneCourseFails) return json({ msg: 'boom' }, 500)
+      const byCourse = {
+        c1: [{ id: 'a1' }, { id: 'a9' }],
+        c2: [{ id: 'a2' }],
+      }
+      return json({ code: 200, success: true, data: { records: byCourse[body.siteId] || [] } })
+    }
+    if (target.includes('/site/list/student')) {
+      if (coursesFail) return json({ msg: 'course list boom' }, 500)
+      return json({
+        code: 200,
+        success: true,
+        data: { records: [{ id: 'c1', siteName: '设计思维' }, { id: 'c2', name: '数据结构' }] },
+      })
+    }
+    return json({ code: 200, success: true, data: {} })
+  }
+}
+
+test('listAssignmentsWithCourses：按课程回填 siteId/siteName，全量记录保底', async (t) => {
+  t.mock.method(globalThis, 'fetch', mockCourseUpstream())
+
+  const records = await listAssignmentsWithCourses({ token: 'tk', userId: 'u1' })
+
+  const byId = new Map(records.map((record) => [String(record.id), record]))
+  assert.equal(byId.get('a1').siteId, 'c1')
+  assert.equal(byId.get('a1').siteName, '设计思维')
+  assert.equal(byId.get('a2').siteId, 'c2')
+  assert.equal(byId.get('a2').siteName, '数据结构')
+  // a3 不属于任何当前课程：保留全量记录，课程信息留空（退化为未知课程）
+  assert.equal(byId.get('a3').siteId, undefined)
+  // a9 只在按课程列表里出现，不混进全量结果
+  assert.equal(byId.has('a9'), false)
+})
+
+test('listAssignmentsWithCourses：课程列表失败时退化为无课程名，不整体失败', async (t) => {
+  t.mock.method(globalThis, 'fetch', mockCourseUpstream({ coursesFail: true }))
+
+  const records = await listAssignmentsWithCourses({ token: 'tk', userId: 'u1' })
+
+  assert.equal(records.length, 3)
+  assert.equal(records[0].siteId, undefined)
+})
+
+test('listAssignmentsWithCourses：单课程失败只丢那一门的名字', async (t) => {
+  t.mock.method(globalThis, 'fetch', mockCourseUpstream({ oneCourseFails: true }))
+
+  const records = await listAssignmentsWithCourses({ token: 'tk', userId: 'u1' })
+
+  const byId = new Map(records.map((record) => [String(record.id), record]))
+  assert.equal(byId.get('a2').siteName, '数据结构')
+  assert.equal(byId.get('a1').siteId, undefined, 'c1 失败，a1 拿不到课程名')
 })
 
 // ── 路由 ────────────────────────────────────────────────────────────────────
