@@ -70,7 +70,8 @@ test('normalizeAssignment：超长字段与 emoji 不炸（哈希/切片/展示�
     id: long,
     assignmentTitle: `🐙${'课'.repeat(1000)}`,
     siteName: long,
-    assignmentEndTime: '2026-10-24 23:59',
+    // 明天截止 → 永远落在 danger 档。写死日期会在到期当刻翻成 overdue（时间炸弹）
+    assignmentEndTime: `${beijingDateString(1)} 23:59`,
   })
   assert.ok(view.title.length > 0)
   assert.equal(view.level, 'danger')
