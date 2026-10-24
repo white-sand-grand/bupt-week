@@ -50,6 +50,40 @@ if (typeof window !== 'undefined') {
   })
 }
 
+// ── 会话心跳：前台每小时探活一次云邮会话 ────────────────────────────────────
+// 探活一箭双雕：服务端顺手续 access_token（约 2 小时寿命）并滑动会话有效期，
+// 挂着不关的页面也不会在 token 过期后突然掉线。教务侧不心跳——jwglweixin
+// token 上游没有刷新机制，探活只能提前宣告死亡，交给访问课表时按需处理。
+// 检查周期 1 分钟、实际探活间隔 ≥1 小时；回到前台立即补一次（间隔 ≥1 分钟，
+// 防止快速切换标签页打爆）。隐藏状态的页面不探活。
+const HEARTBEAT_INTERVAL_MS = 60 * 60 * 1000
+const HEARTBEAT_MIN_GAP_MS = 60 * 1000
+let lastHeartbeatAt = 0
+
+async function heartbeat() {
+  if (!ucloud.value || document.visibilityState !== 'visible') return
+  if (Date.now() - lastHeartbeatAt < HEARTBEAT_MIN_GAP_MS) return
+  lastHeartbeatAt = Date.now()
+  try {
+    const data = await checkUcloudSession(ucloud.value.sessionId)
+    ucloud.value = { ...ucloud.value, ...data }
+    write(UCLOUD_KEY, ucloud.value)
+  } catch (error) {
+    // 与 restore 同语义：明确 401 才清本地态，网络错误保留
+    if (error instanceof ApiError && error.status === 401) {
+      ucloud.value = null
+      write(UCLOUD_KEY, null)
+    }
+  }
+}
+
+if (typeof window !== 'undefined' && typeof document !== 'undefined') {
+  window.setInterval(() => {
+    if (Date.now() - lastHeartbeatAt >= HEARTBEAT_INTERVAL_MS) heartbeat().catch(() => {})
+  }, 60_000)
+  document.addEventListener('visibilitychange', () => heartbeat().catch(() => {}))
+}
+
 export const auth = {
   loggedIn: computed(() => Boolean(ucloud.value || jwgl.value)),
   username: computed(() => ucloud.value?.username || jwgl.value?.username || ''),

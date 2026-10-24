@@ -547,6 +547,76 @@ test('会话已失效时刷新页面会被打回登录态', async () => {
   }
 })
 
+test('会话心跳：回到前台立即补一次云邮探活（续 token + 滑动有效期）', async () => {
+  const page = await browser.newPage()
+  try {
+    let probes = 0
+    page.on('request', (request) => {
+      if (request.url().includes('/api/ucloud/session')) probes += 1
+    })
+    await page.route('**/api/auth/login', (route) => fulfill(route, LOGIN_OK))
+    await page.route('**/api/ucloud/session', (route) => fulfill(route, UCLOUD_SESSION))
+
+    await page.goto(APP_ORIGIN, { waitUntil: 'networkidle' })
+    await page.fill(`${panel} input[type="text"]`, '2021001234')
+    await page.fill(`${panel} input[type="password"]`, 'pw')
+    await page.click(`${panel} button[type="submit"]`)
+    await page.waitForFunction(() => document.querySelectorAll('.panel').length === 0)
+
+    // 登录后没有主动探活（restore 只在挂载时跑）
+    assert.equal(probes, 0)
+
+    // 合成 visibilitychange（模拟用户切回标签页）：心跳立即补一次
+    await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
+    await page.waitForTimeout(800)
+    assert.ok(probes >= 1, '回前台应触发一次云邮探活')
+
+    // 探活成功，登录态保持
+    assert.match(await page.textContent('.topbar-auth'), /张三/)
+  } finally {
+    await page.close()
+  }
+})
+
+test('教务会话过期后刷新：降级黄条出现，补填教务密码可恢复课表', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.route('**/api/auth/login', (route) => fulfill(route, LOGIN_OK))
+    await page.route('**/api/ucloud/session', (route) => fulfill(route, UCLOUD_SESSION))
+    await page.route('**/api/auth/jwglweixin/password', (route) =>
+      fulfill(route, { success: true, data: { sessionId: 'wx-sid', username: '2021001234', expiresAt: EXPIRES_AT } }),
+    )
+    await page.route('**/api/jwgl/timetable', (route) => mockTimetable(route))
+
+    await page.goto(APP_ORIGIN, { waitUntil: 'networkidle' })
+    await page.fill(`${panel} input[type="text"]`, '2021001234')
+    await page.fill(`${panel} input[type="password"]`, 'pw')
+    await page.click(`${panel} button[type="submit"]`)
+    await page.waitForFunction(() => document.querySelectorAll('.panel').length === 0)
+
+    // 教务会话上游过期（真实场景：jwglweixin token 失效）——刷新后探活 401
+    await page.route('**/api/jwgl/session', (route) =>
+      fulfill(route, { success: false, stage: 'jwgl-auth', msg: '教务登录已过期，请重新登录' }, 401),
+    )
+    await page.reload({ waitUntil: 'networkidle' })
+
+    // 教务侧清掉、降级黄条出现；云邮侧（顶栏姓名）不受影响
+    await page.waitForSelector('.view .notice-warn')
+    assert.equal(await page.evaluate(() => localStorage.getItem('bupt-week-jwgl-auth')), null, '过期的教务登录态应清除')
+    assert.match(await page.textContent('.topbar-auth'), /张三/)
+
+    // 不必重新输统一身份密码：黄条里补填教务密码即可恢复
+    await page.click('.view .notice-warn .notice-action')
+    await page.fill('.view .password-form input', 'jwgl-secret')
+    await page.click('.view .password-form button[type="submit"]')
+
+    await page.waitForFunction(() => document.querySelector('.view .notice-warn') === null)
+    assert.ok(await page.evaluate(() => localStorage.getItem('bupt-week-jwgl-auth')), '补填后教务登录态恢复')
+  } finally {
+    await page.close()
+  }
+})
+
 // ── 企业微信回流落地 ────────────────────────────────────────────────────────
 
 test('企微回流：hash 带回的 sessionId 落地成登录态，且 URL 被清干净', async () => {

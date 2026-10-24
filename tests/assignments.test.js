@@ -173,3 +173,18 @@ test('POST /api/ucloud/assignment/detail：缺 assignmentId 报 400', async () =
   await store.set('uc', { kind: 'ucloud', accessToken: 'tk', expiresAt: Date.now() + 86400000 })
   assert.equal((await post(app, '/api/ucloud/assignment/detail', { sessionId: 'uc' })).status, 400)
 })
+
+test('POST /api/ucloud/assignments：拉取成功即滑动续期（正常使用不掉线）', async (t) => {
+  const { app, store } = makeApp()
+  const now = Date.now()
+  await store.set('uc', {
+    kind: 'ucloud', accessToken: 'tk',
+    createdAt: now - 8 * 86400000, expiresAt: now + 5 * 86400000,
+  })
+  t.mock.method(globalThis, 'fetch', mockCourseUpstream())
+
+  const response = await post(app, '/api/ucloud/assignments', { sessionId: 'uc' })
+  assert.equal(response.status, 200)
+  const stored = await store.get('uc')
+  assert.ok(Math.abs(stored.expiresAt - (now + 7 * 86400000)) < 60_000, '作业拉取成功应把会话滑到 7 天后')
+})

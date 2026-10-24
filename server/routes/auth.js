@@ -7,8 +7,15 @@ import { loginJwglweixin, validateWeixinSession } from '../services/jwglweixin.j
 import { createLoginRateLimiter } from '../rate-limit.js'
 import { withUserAgent } from '../user-agent.js'
 
-// 服务端会话 7 天。上游会话可能提前失效，届时提示重新登录即可。
+// 服务端会话 7 天；探活/业务成功时滑动续期，30 天绝对上限。
+// 上游会话可能提前失效，届时提示重新登录即可。
 const SESSION_TTL_MS = 7 * 86400000
+// 滑动续期的绝对上限：无论怎么活跃，距创建 30 天必须重新登录——
+// 被盗 sessionId 的最长有效窗口要有硬顶
+const SESSION_ABSOLUTE_MS = 30 * 86400000
+// 剩余时间低于 6 天才滑动：每次成功请求都回写是写放大（KV 按天配额），
+// 这样每天最多滑一次，剩余充足时零写入
+const SESSION_SLIDE_BELOW_MS = 6 * 86400000
 
 const UCLOUD_SERVICE = 'https://ucloud.bupt.edu.cn'
 
@@ -25,6 +32,24 @@ function newSessionId() {
 
 function expiresAt() {
   return Date.now() + SESSION_TTL_MS
+}
+
+/**
+ * 滑动续期（纯函数，不碰存储）：会话被正常使用且剩余不足 6 天时，把过期
+ * 时间推到 min(现在+7天, 创建起 30 天绝对上限)。调用方比较返回值与入参
+ * 的引用决定是否回写 store（与 token/cookie 刷新合并成一次写）。
+ *
+ * 老会话（滑动机制上线前建的）没有 createdAt：按 expiresAt-7天 补推，
+ * 绝对上限从此刻起算，不会被无限续。
+ * @returns {object} 无需续期时原样返回入参引用，否则返回带新 expiresAt 的副本
+ */
+export function slideSessionExpiry(session) {
+  const now = Date.now()
+  const createdAt = Number.isFinite(session.createdAt) ? session.createdAt : session.expiresAt - SESSION_TTL_MS
+  if (session.expiresAt - now >= SESSION_SLIDE_BELOW_MS) return session
+  const expiresAt = Math.min(now + SESSION_TTL_MS, createdAt + SESSION_ABSOLUTE_MS)
+  if (expiresAt <= session.expiresAt) return session
+  return { ...session, createdAt, expiresAt }
 }
 
 /**
@@ -159,6 +184,7 @@ export function createAuthRoutes({ getSessionStore, frontendUrl = '', allowedOri
     await store.set(ucloudSessionId, {
       kind: 'ucloud',
       ...ucloud,
+      createdAt: Date.now(),
       expiresAt: expiresAt(),
     })
 
@@ -171,6 +197,7 @@ export function createAuthRoutes({ getSessionStore, frontendUrl = '', allowedOri
         kind: jwgl.kind,
         ...(jwgl.kind === 'jwglweixin' ? { token: jwgl.token } : { cookies: jwgl.cookies }),
         username,
+        createdAt: Date.now(),
         expiresAt: expiresAt(),
       })
     }
@@ -198,7 +225,7 @@ export function createAuthRoutes({ getSessionStore, frontendUrl = '', allowedOri
     const result = await loginUcloudWithTicket(ticket, { username })
 
     const sessionId = newSessionId()
-    await getSessionStore().set(sessionId, { kind: 'ucloud', ...result, expiresAt: expiresAt() })
+    await getSessionStore().set(sessionId, { kind: 'ucloud', ...result, createdAt: Date.now(), expiresAt: expiresAt() })
 
     return c.json({
       success: true,
@@ -220,15 +247,17 @@ export function createAuthRoutes({ getSessionStore, frontendUrl = '', allowedOri
       await store.delete(sessionId)
       throw new ApiError(401, { stage: 'ucloud-auth', msg: '云邮登录已过期，请重新登录' })
     }
-    if (renewed !== session) await store.set(sessionId, renewed)
+    // token 续期与滑动续期合并成至多一次回写（都是换 expiresAt/凭证后 set）
+    const slid = slideSessionExpiry(renewed)
+    if (slid !== session) await store.set(sessionId, slid)
 
     return c.json({
       success: true,
       data: {
         sessionId,
-        username: renewed.username,
-        realName: renewed.realName,
-        expiresAt: renewed.expiresAt,
+        username: slid.username,
+        realName: slid.realName,
+        expiresAt: slid.expiresAt,
       },
     })
   })
@@ -250,6 +279,7 @@ export function createAuthRoutes({ getSessionStore, frontendUrl = '', allowedOri
       kind: 'jwgl',
       cookies: result.cookies,
       username: result.username,
+      createdAt: Date.now(),
       expiresAt: expiresAt(),
     })
 
@@ -272,9 +302,11 @@ export function createAuthRoutes({ getSessionStore, frontendUrl = '', allowedOri
         if (error.status === 401) await store.delete(sessionId)
         throw error
       }
+      const slid = slideSessionExpiry(session)
+      if (slid !== session) await store.set(sessionId, slid)
       return c.json({
         success: true,
-        data: { sessionId, username: session.username, expiresAt: session.expiresAt },
+        data: { sessionId, username: session.username, expiresAt: slid.expiresAt },
       })
     }
 
@@ -286,11 +318,13 @@ export function createAuthRoutes({ getSessionStore, frontendUrl = '', allowedOri
       throw error
     }
 
-    if (cookies !== session.cookies) await store.set(sessionId, { ...session, cookies })
+    // Cookie 刷新与滑动续期合并成至多一次回写
+    const slid = slideSessionExpiry(cookies !== session.cookies ? { ...session, cookies } : session)
+    if (slid !== session) await store.set(sessionId, slid)
 
     return c.json({
       success: true,
-      data: { sessionId, username: session.username, expiresAt: session.expiresAt },
+      data: { sessionId, username: session.username, expiresAt: slid.expiresAt },
     })
   })
 
@@ -316,6 +350,7 @@ export function createAuthRoutes({ getSessionStore, frontendUrl = '', allowedOri
       kind: 'jwglweixin',
       token,
       username: session.username,
+      createdAt: Date.now(),
       expiresAt: expiresAt(),
     })
 
@@ -434,7 +469,7 @@ export function createAuthRoutes({ getSessionStore, frontendUrl = '', allowedOri
 
     const ucloud = await loginUcloudWithTicket(ticket)
     const sessionId = newSessionId()
-    await getSessionStore().set(sessionId, { kind: 'ucloud', ...ucloud, expiresAt: expiresAt() })
+    await getSessionStore().set(sessionId, { kind: 'ucloud', ...ucloud, createdAt: Date.now(), expiresAt: expiresAt() })
 
     return redirectToFrontend(
       c,

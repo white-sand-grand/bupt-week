@@ -4,6 +4,7 @@ import { resolveResourceDownload } from '../services/resources.js'
 import { fetchTimetable } from '../services/timetable.js'
 import { fetchTimetableWeixin } from '../services/jwglweixin.js'
 import { getAssignmentDetail, listAssignmentsWithCourses } from '../services/assignments.js'
+import { slideSessionExpiry } from './auth.js'
 
 /**
  * 本站自己的业务接口。
@@ -68,12 +69,18 @@ export function createApiRoutes({ getSessionStore }) {
   routes.post('/ucloud/assignments', async (c) => {
     const { sessionId } = await readJson(c.req.raw)
 
-    const session = await getSessionStore().get(sessionId)
+    const store = getSessionStore()
+    const session = await store.get(sessionId)
     if (!session || session.kind !== 'ucloud') {
       throw new ApiError(401, { stage: 'ucloud-auth', msg: '云邮登录已过期，请重新登录' })
     }
 
     const records = await listAssignmentsWithCourses({ token: session.accessToken, userId: session.userId })
+
+    // 正常使用即续命：作业拉取成功说明会话活着，滑动续期（剩余充足时零写入）
+    const slid = slideSessionExpiry(session)
+    if (slid !== session) await store.set(sessionId, slid)
+
     return c.json({ success: true, data: { assignments: records } })
   })
 

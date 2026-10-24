@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createBackend } from '../server/app.js'
+import { slideSessionExpiry } from '../server/routes/auth.js'
 import { MemorySessionStore } from '../server/storage/memory.js'
 
 const CAS_PAGE = '<input type="hidden" name="execution" value="e1s2e3" />'
@@ -298,4 +299,79 @@ test('两个系统的 sessionId 不通用', async () => {
 
   assert.equal((await post(app, '/api/ucloud/session', { sessionId: 'jw' })).status, 401)
   assert.equal((await post(app, '/api/jwgl/session', { sessionId: 'uc' })).status, 401)
+})
+
+// ── 滑动续期（探活成功即续命，30 天绝对上限）─────────────────────────────────
+
+const DAY = 86400000
+
+test('slideSessionExpiry：剩余充足返回原引用（零写入）；不足 6 天推到 7 天', () => {
+  const now = Date.now()
+  const fresh = { kind: 'ucloud', createdAt: now, expiresAt: now + 7 * DAY }
+  assert.equal(slideSessionExpiry(fresh), fresh, '剩余 7 天不动')
+
+  const stale = { kind: 'ucloud', createdAt: now - 8 * DAY, expiresAt: now + 5 * DAY }
+  const slid = slideSessionExpiry(stale)
+  assert.notEqual(slid, stale)
+  assert.ok(Math.abs(slid.expiresAt - (now + 7 * DAY)) < 60_000, '推到 7 天后')
+  assert.equal(slid.createdAt, stale.createdAt, 'createdAt 不变')
+})
+
+test('slideSessionExpiry：30 天绝对上限——续期不越过创建起 30 天', () => {
+  const now = Date.now()
+  // 真实可达状态：25 天前创建（经多次滑动）现在剩 4 天，滑到头也只能到
+  // createdAt+30 天（now+5 天），拿不满 7 天
+  const veteran = { kind: 'ucloud', createdAt: now - 25 * DAY, expiresAt: now + 4 * DAY }
+  const slid = slideSessionExpiry(veteran)
+  assert.notEqual(slid, veteran)
+  assert.ok(Math.abs(slid.expiresAt - (now + 5 * DAY)) < 60_000, '上限 = createdAt+30天，而非 now+7天')
+
+  // 已顶到上限（剩 0.5 天触发条件但上限就在当下）：不再续也不缩短，等自然过期
+  const capped = { kind: 'ucloud', createdAt: now - 29.5 * DAY, expiresAt: now + 0.5 * DAY }
+  assert.equal(slideSessionExpiry(capped), capped, '顶到上限的会话保持原样')
+})
+
+test('slideSessionExpiry：老会话无 createdAt 按 expiresAt-7天补推，不被无限续', () => {
+  const now = Date.now()
+  const legacy = { kind: 'ucloud', expiresAt: now + 5 * DAY }
+  const slid = slideSessionExpiry(legacy)
+  assert.ok(Math.abs(slid.expiresAt - (now + 7 * DAY)) < 60_000)
+  assert.ok(Math.abs(slid.createdAt - (now - 2 * DAY)) < 60_000, '补推的 createdAt 参与后续上限计算')
+})
+
+test('POST /api/ucloud/session：剩余不足 6 天时滑动续期并回写 store', async (t) => {
+  const { app, store } = makeApp()
+  const now = Date.now()
+  await store.set('sid', {
+    kind: 'ucloud', accessToken: 'tk', refreshToken: 'r', userId: '1',
+    username: 'u', realName: '张三',
+    createdAt: now - 8 * DAY, expiresAt: now + 5 * DAY,
+  })
+  t.mock.method(globalThis, 'fetch', async () => json({ code: 200, success: true, data: { id: '1' } }))
+
+  const response = await post(app, '/api/ucloud/session', { sessionId: 'sid' })
+  const body = await response.json()
+
+  assert.equal(body.success, true)
+  assert.ok(Math.abs(body.data.expiresAt - (now + 7 * DAY)) < 60_000, '响应里给新过期时间')
+  const stored = await store.get('sid')
+  assert.ok(Math.abs(stored.expiresAt - (now + 7 * DAY)) < 60_000, 'store 回写')
+  assert.equal(JSON.stringify(stored).includes('password'), false, '凭证里永不出现密码')
+})
+
+test('POST /api/jwgl/session：jwglweixin 会话探活成功也滑动续期', async (t) => {
+  const { app, store } = makeApp()
+  const now = Date.now()
+  await store.set('wx', {
+    kind: 'jwglweixin', token: 'tk', username: 'u',
+    createdAt: now - 8 * DAY, expiresAt: now + 5 * DAY,
+  })
+  t.mock.method(globalThis, 'fetch', async () => json({ code: '1', data: [{}] }))
+
+  const response = await post(app, '/api/jwgl/session', { sessionId: 'wx' })
+  const body = await response.json()
+
+  assert.equal(body.success, true)
+  assert.ok(Math.abs(body.data.expiresAt - (now + 7 * DAY)) < 60_000)
+  assert.ok(Math.abs((await store.get('wx')).expiresAt - (now + 7 * DAY)) < 60_000)
 })
