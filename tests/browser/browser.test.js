@@ -855,6 +855,34 @@ test('微信里即便不自动跳，手动企业微信登录按钮也在（兜�
   await context.close()
 })
 
+test('企微回流失败：失败原因说人话显示，URL 清干净且可手动重试', async () => {
+  const context = await browser.newContext({ userAgent: WECHAT_UA })
+  const page = await context.newPage()
+
+  // 打上防循环标记：这是「回流落地」那一刻的状态——首次自动识别已经发生过、
+  // 失败回来了。没有标记的话页面会先被自动跳走，根本到不了错误展示。
+  await context.addInitScript(() => {
+    sessionStorage.setItem('bupt-week-auto-wecom-tried', '1')
+  })
+
+  // 模拟后端 callback 校验失败后的回流形态：#/login?error=wecom-no-ticket
+  await page.goto(`${APP_ORIGIN}/#/login?error=wecom-no-ticket`, { waitUntil: 'networkidle' })
+
+  // 黄条人话提示（含阶段名翻译与出路），而不是静默退回登录框
+  await page.waitForSelector('.banner-warn')
+  const banner = await page.textContent('.banner-warn')
+  assert.match(banner, /学校网关没有带回登录凭证/)
+  assert.match(banner, /学号密码/)
+
+  // 错误参数不留在地址栏（history 里也不该有）
+  assert.equal(page.url().includes('error='), false, '错误码不该留在地址栏')
+
+  // 防循环标记已清：用户可以手动点企业微信登录再试一次
+  assert.equal(await page.evaluate(() => sessionStorage.getItem('bupt-week-auto-wecom-tried')), null)
+  await page.waitForSelector('.wecom')
+  await context.close()
+})
+
 // ── 课表 ────────────────────────────────────────────────────────────────────
 
 /** 课表接口的 mock：不带 week 返回第 18 周（当前），带 week=19 返回第 19 周。 */

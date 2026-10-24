@@ -12,6 +12,16 @@ import ClassView from './views/ClassView.vue'
 const state = ref('checking')
 const detail = ref('')
 const view = ref('timetable')
+// 企微自动识别失败的human readable原因（回流 hash 里的 error 码翻译）
+const wecomError = ref('')
+
+// 企微回流的失败码 → 说人话。全部给出路：重试按钮就在登录面板里。
+const WECOM_ERROR_TEXT = {
+  'wecom-cancelled': '企业微信识别被中断了（可能中途返回了微信）。可点下方按钮重试，或用学号密码登录。',
+  'wecom-state': '企业微信识别的安全校验没有通过（通常是识别过程停留太久）。请重试一次；仍失败就用学号密码登录。',
+  'wecom-connect': '学校认证服务暂时连不上，企业微信识别没有完成。可以用学号密码登录，稍后再试自动识别。',
+  'wecom-no-ticket': '企业微信识别走完了，但学校网关没有带回登录凭证。请用学号密码登录，并把这条提示截图反馈，便于排查校方接口。',
+}
 
 // 本次会话是否已自动试过企业微信。用它防循环：失败后清掉，
 // 让用户能用学号密码兜底，而不是一遍遍被弹走。
@@ -56,9 +66,13 @@ onMounted(async () => {
     return
   }
 
-  // 企业微信回调失败：清掉标记。面板未登录时本就展开，用户可以直接用学号密码兜底。
-  if (hashQuery.get('error')?.startsWith('wecom-')) {
+  // 企业微信回调失败：清掉标记（用户可手动再试），并把失败原因说给人听——
+  // 静默退回登录框会让「为什么识别失败」变成永久盲区。
+  const wecomErrorCode = hashQuery.get('error') || ''
+  if (wecomErrorCode.startsWith('wecom-')) {
     sessionStorage.removeItem(AUTO_WECOM_KEY)
+    wecomError.value = WECOM_ERROR_TEXT[wecomErrorCode]
+      || `企业微信自动识别没有完成（${wecomErrorCode}）。可以用学号密码登录。`
     history.replaceState(null, '', location.pathname + location.search)
   }
 })
@@ -88,6 +102,9 @@ onMounted(async () => {
     </p>
 
     <!-- 登录面板：未登录时常驻。它不挡下面的视图，页面照常进、照常切。 -->
+    <div v-if="wecomError && !auth.loggedIn.value" class="banner banner-warn" role="status">
+      {{ wecomError }}
+    </div>
     <LoginPanel v-if="!auth.loggedIn.value" :auth="auth" />
 
     <nav class="tabs" aria-label="功能切换">
@@ -235,6 +252,23 @@ h1 {
   color: var(--error);
   background: var(--error-bg);
   border-bottom: 1px solid var(--error-line);
+}
+
+.banner-warn {
+  margin: 0.75rem 1rem 0;
+  padding: 0.625rem 0.875rem;
+  border-radius: var(--radius-md);
+  font-size: 0.8125rem;
+  line-height: 1.6;
+  color: var(--warn);
+  background: var(--warn-bg);
+  border: 1px solid #fde68a;
+}
+
+@media (prefers-color-scheme: dark) {
+  .banner-warn {
+    border-color: #55461a;
+  }
 }
 
 /* 分段控件：圆角容器内滑动高亮，比下划线 tab 更醒目 */
