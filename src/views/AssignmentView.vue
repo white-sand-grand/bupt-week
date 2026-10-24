@@ -4,7 +4,7 @@ import { auth } from '../composables/auth.js'
 import { assignmentsStore } from '../composables/assignments.js'
 import { downloadResource } from '../api/files.js'
 import { buildAssignmentUrl } from '../utils/assignment-url.js'
-import { deadlineProgress } from '../utils/deadline.js'
+import { deadlineProgress, formatCountdown } from '../utils/deadline.js'
 import { formatUpdatedAt, beijingDateString } from '../utils/format.js'
 import { friendlyError } from '../utils/errors.js'
 
@@ -69,10 +69,21 @@ async function download(attachment) {
 const now = ref(Date.now())
 let progressClock = null
 
+/** 倒计时的锚定时刻：页面打开那一刻，不随时钟走（要求不实时刷新，
+ *  重新打开或刷新页面才重新取时间）。模块级而不是组件级——切视图重挂载
+ *  也不重置。 */
+const anchoredNow = Date.now()
+
 /** 未提交的作业才有进度可言；已提交的返回 null（不画条）。 */
 function progressOf(assignment) {
   if (assignment.isCompleted) return null
   return deadlineProgress(assignment.beginTime, assignment.deadline, now.value)
+}
+
+/** 距截止倒计时（精确到分钟）：未提交且未过截止才有。 */
+function countdownOf(assignment) {
+  if (assignment.isCompleted) return ''
+  return formatCountdown(assignment.deadline, anchoredNow)
 }
 
 function startLoad() {
@@ -152,6 +163,7 @@ const groups = computed(() => assignmentsStore.groups.value)
             <span class="card-meta">
               <span class="badge" :class="LEVEL_CLASS[assignment.level]">{{ assignment.status }}</span>
               <span v-if="deadlineLabel(assignment)" class="deadline">{{ deadlineLabel(assignment) }}</span>
+              <span v-if="countdownOf(assignment)" class="countdown">{{ countdownOf(assignment) }}</span>
             </span>
             <!-- 截止进度：细长一条，颜色与左侧色条同源（颜色即紧急度）。装饰性——
                  语义已由徽标和时间文本承载，进度条只是视觉冗余，对读屏隐藏。 -->
@@ -486,6 +498,13 @@ h3 {
 
 .deadline {
   color: var(--muted);
+}
+
+/* 距截止倒计时：按页面打开时刻算的静态值，比截止时间更醒目一档 */
+.countdown {
+  color: var(--ink-soft);
+  font-weight: 500;
+  white-space: nowrap;
 }
 
 .card-detail {

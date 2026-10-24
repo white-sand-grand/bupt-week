@@ -99,6 +99,33 @@ export function isRecordCompleted(record) {
 // 的未交作业算「往期未交」，不再混进「已逾期」里催促。
 const CURRENT_TERM_GRACE_DAYS = 60
 
+/** 是否还算本学期：截止缺解析（daysLeft null）的一律保留——课程映射失败
+ *  时不能误杀没过期的作业；只有截止已过宽限期 60 天的才算往期。 */
+export function isCurrentTerm(assignment) {
+  return assignment.daysLeft === null || assignment.daysLeft >= -CURRENT_TERM_GRACE_DAYS
+}
+
+/**
+ * 距截止倒计时（精确到分钟）。now 由调用方传入——要求锚定在页面打开时刻，
+ * 不随时钟走（用户明确要求不实时刷新）。
+ * @returns {string} 形如「距截止 2天3小时15分」；已过截止或解析不了返回 ''
+ */
+export function formatCountdown(deadline, now) {
+  const end = beijingTimestamp(deadline)
+  if (Number.isNaN(end)) return ''
+  const diff = end - now
+  if (diff <= 0) return ''
+  const minutes = Math.floor(diff / 60_000)
+  const days = Math.floor(minutes / 1440)
+  const hours = Math.floor((minutes % 1440) / 60)
+  const mins = minutes % 60
+  const parts = []
+  if (days > 0) parts.push(`${days}天`)
+  if (hours > 0) parts.push(`${hours}小时`)
+  if (mins > 0) parts.push(`${mins}分`)
+  return parts.length ? `距截止 ${parts.join('')}` : '距截止 不足1分钟'
+}
+
 /** 展示模型的字符串字段只放行 string——上游塞对象/数组进来时宁可落空，不带着脏类型进视图。 */
 const text = (value, fallback = '') => (typeof value === 'string' ? value : fallback)
 

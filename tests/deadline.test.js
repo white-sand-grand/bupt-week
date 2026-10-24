@@ -3,8 +3,10 @@ import assert from 'node:assert/strict'
 import {
   beijingTimestamp,
   deadlineProgress,
+  formatCountdown,
   getDaysLeft,
   groupByCourse,
+  isCurrentTerm,
   isRecordCompleted,
   normalizeAssignment,
   sortAssignments,
@@ -118,4 +120,25 @@ test('groupByCourse：按课程分组并保持顺序', () => {
   const groups = groupByCourse(items)
   assert.deepEqual(groups.map((g) => g.courseName), ['数据结构', '操作系统'])
   assert.equal(groups[0].items.length, 2)
+})
+
+test('formatCountdown：距截止精确到分钟，零值单位不拼接', () => {
+  // NOW = 2026-10-24 12:00 北京时间
+  assert.equal(formatCountdown('2026-10-26 15:15:00', NOW), '距截止 2天3小时15分')
+  assert.equal(formatCountdown('2026-10-24 15:00:00', NOW), '距截止 3小时')
+  assert.equal(formatCountdown('2026-10-24 12:30:00', NOW), '距截止 30分')
+  // 不足 1 分钟也有说法，不出空串也不出「距截止 」
+  assert.equal(formatCountdown('2026-10-24 12:00:30', NOW), '距截止 不足1分钟')
+  // 已过截止 / 解析不了：不显示
+  assert.equal(formatCountdown('2026-10-24 11:00:00', NOW), '')
+  assert.equal(formatCountdown('', NOW), '')
+  assert.equal(formatCountdown('garbage', NOW), '')
+})
+
+test('isCurrentTerm：截止过宽限期 60 天算往期，解析不了的一律保留', () => {
+  // NOW = 2026-10-24；过 60 天 ≈ 2026-08-25 之前
+  assert.equal(isCurrentTerm(normalizeAssignment({ assignmentEndTime: '2026-10-28 23:59:00' }, NOW)), true)
+  assert.equal(isCurrentTerm(normalizeAssignment({ assignmentEndTime: '2026-08-26 23:59:00' }, NOW)), true, '宽限期内保留')
+  assert.equal(isCurrentTerm(normalizeAssignment({ assignmentEndTime: '2026-06-01 23:59:00' }, NOW)), false, '超宽限期滤掉')
+  assert.equal(isCurrentTerm(normalizeAssignment({ assignmentEndTime: 'garbage' }, NOW)), true, '解析不了不误杀')
 })

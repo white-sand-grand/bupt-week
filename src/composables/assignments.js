@@ -1,7 +1,7 @@
 import { computed, readonly, ref, watch } from 'vue'
 import { auth } from './auth.js'
 import { fetchAssignments, fetchAssignmentDetail } from '../api/assignments.js'
-import { normalizeAssignment, sortAssignments, groupByCourse } from '../utils/deadline.js'
+import { normalizeAssignment, sortAssignments, groupByCourse, isCurrentTerm } from '../utils/deadline.js'
 import { readAssignmentsCache, writeAssignmentsCache } from '../utils/assignments-cache.js'
 import { friendlyError } from '../utils/errors.js'
 
@@ -28,7 +28,10 @@ const attachmentState = ref({})
 
 let revision = 0
 
-const assignments = computed(() => sortAssignments(raw.value.map((record) => normalizeAssignment(record))))
+/** 展示列表只留本学期：截止已过宽限期（60 天）的往期作业（含往期未交）不再出现。
+ *  解析不了截止时间的一律保留——映射失败不能误杀正常作业。 */
+const assignments = computed(() =>
+  sortAssignments(raw.value.map((record) => normalizeAssignment(record))).filter(isCurrentTerm))
 const groups = computed(() => groupByCourse(assignments.value))
 const unfinishedCount = computed(() => assignments.value.filter((item) => !item.isCompleted && item.level !== 'missed').length)
 
