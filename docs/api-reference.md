@@ -379,15 +379,17 @@ https://ucloud.bupt.edu.cn/uclass/course.html#/student/assignmentDetails_fullpag
 
 > 建议实现时把已知的可选参数也带上，减少详情页的一次往返，但**不要依赖它们**——它们不是详情页的数据来源。
 
-### 3.2.1 深链不能直开：CAS 桌面皮肤 400 白屏 【实测 2026-10-24，重要修正】
+### 3.2.1 深链与 CAS 桌面登录页的服务端故障 【实测 2026-10-24，两次追加】
 
-浏览器没有云邮会话时，深链会被 SPA 弹到 CAS 登录页（service=根域）。**CAS 桌面皮肤从浏览器发起对 `/authserver/cas/login-normal.html` 的请求稳定返回 400**（nginx 裸 400，Edge/Chromium/Electron 全复现 3/3；curl 和 Node fetch 同 URL 全 200，协议层 H1.1/H2 均排除，疑与浏览器特有请求头组合有关）。该 iframe 是现代登录 UI 的唯一载体 → 用户看到白屏：表单在 DOM 里但在视口外，页面 `overflow:hidden` 不能滚动。
+浏览器没有云邮会话时，深链会被 SPA 弹到 CAS 登录页（service=根域）。**CAS 桌面端对现代浏览器服务端故障**，逐项实测：
 
-- **微信 UA 不受影响**：CAS 的 init.js 检测到 MicroMessenger 会在加载皮肤前自动跳企微识别（mc-wx），根本不碰坏皮肤。
-- **`dev=1` 是解药**：CAS init.js 自留的开关——跳过 iframe、直接显示内联老式表单（`#default`），实测 3/3 稳定渲染。
+- **皮肤 iframe 400**：`/authserver/cas/login-normal.html` 从浏览器发起稳定 400（nginx 裸 400；curl/Node fetch 同 URL 全 200，HTTP/2、UA、Sec-Fetch、Cookie、Referer 逐项排除）→ 外壳 200 但内容空白 → 白屏。Edge/Chromium/Electron 全复现。
+- **`dev=1` 方案证伪**（第一次修复尝试）：`init.js` 自留开关可强制老式内联表单，**无 CAS cookie 的浏览器里稳定 200**（初测 3/3 通过）；但**浏览器带 CAS cookie 后 `dev=1` 链接稳定 400**（复测 4/4，短/长 service 均中）——真实用户第二次点击就会失败。无 `dev=1` + 同 cookie 的登录页 200。
+- **微信 UA 不受影响**：CAS 的 init.js 检测到 MicroMessenger 会在加载皮肤前自动跳企微识别（mc-wx），根本不碰坏皮肤。**手机微信内始终可用**。
 - **CAS 接受完整深链作 service**（前缀匹配放行，实测）；根路径 `/?ticket=` 有网关层交换处理（实测发起了 oauth/token 请求）。
-- **§3.4 的 query 鉴权模式在详情页路由不成立**：带 siteId+roleId+refresh_token 照样被守卫弹去 CAS（实测）。refresh_token 不进 URL 的安全决策不受影响。
-- 落地方案：`去交作业` → `https://auth.bupt.edu.cn/authserver/login?service=<编码后的完整深链>&dev=1`。已有云邮会话的人被 CAS 自动直通到作业；没有的人登录后落在云邮首页，回本页再点一次即可。
+- **§3.4 的 query 鉴权模式在详情页路由不成立**：带 siteId+roleId+refresh_token 照样被守卫弹去 CAS（实测）。courseHomePage 路由的该模式可用，但涉及 refresh_token 进 URL 的安全权衡，未采纳。
+
+**定稿方案（2026-10-24 晚，用户拍板）**：`去交作业` = 裸深链（§3.2 原样）。有云邮会话的浏览器直达；没有的会撞上 CAS 白屏，由前端文案引导「手机微信内打开本站重试（企微自动识别）或稍后再试」。**不引入 refresh_token 中转**（维持长效凭证不进 URL 的安全决策）。
 
 ### 3.3 为什么作业列表页不能直接深链 【实测】
 

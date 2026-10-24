@@ -105,5 +105,15 @@ IAB 的 Playwright locator `fill`/`click`/`press` 在此页面上无法触发 Vu
 2. `dev=1`（CAS init.js 自留开关）跳过 iframe 直显老式内联表单，实测 3/3 稳定渲染。
 3. 微信 UA 在加载皮肤前就被 CAS 自动转企微识别（mc-wx），**微信内不受影响**，坏的只是桌面浏览器路径。
 4. 三个备选方案实测证伪：§3.4 query 鉴权（详情页路由照样被守卫弹走）、深链作 service + course.html?ticket（SPA 不消费 ticket）、courseHomePage 桥接（同样被弹）。根路径 `/?ticket=` 有网关层交换（实测发起 oauth/token）。
-5. 落地：`去交作业` 改为经 `authserver/login?service=<完整深链>&dev=1` 入口。已登录云邮的浏览器被 CAS 自动直通到作业；未登录的登录后落在云邮首页，回本页再点一次即达。
+5. ~~落地：`去交作业` 改为经 `authserver/login?service=<完整深链>&dev=1` 入口。~~ **当晚二次证伪并回滚**（见下节）。
 6. 同批改进：作业卡片截止时间下新增细长进度条（4px，颜色复用紧急度色条，30s 时钟驱动）。起点数据实测 38/38 条 `assignmentBeginTime` 为空，故 `deadlineProgress` 在起点缺失时回退 7 天窗口（对齐「临近截止」分级阈值）。
+
+## 深链二次实测：dev=1 证伪，定稿裸深链（2026-10-24 晚）
+
+用户报告 dev=1 入口点击后 404/400。复现与对照：
+
+- 同一 dev=1 URL：全新无 cookie 的浏览器上下文 200（昨天的测试环境）；**带 CAS cookie 的浏览器稳定 400**（受控标签 reload 4/4，短/长 service 均中）。无 `dev=1` + 同 cookie 的登录页 200——**罪魁就是 dev=1 与已有 CAS cookie 的组合**（服务端行为，机理未知）。真实用户第二次点击必中。
+- IAB 内 auth.bupt 连接状态污染后连裸登录页外壳也间歇 400；Edge 干净环境裸深链 → CAS 弹回 → 皮肤 iframe 400 → 白屏（与首测一致）。
+- `login-mobile.html` 直开不可用（无表单空壳，参数靠父页注入）。
+
+**定稿（用户拍板）**：去交作业 = 裸深链 + 引导文案（白屏时微信内重试/稍后再试）；不采纳 refresh_token 中转（维持长效凭证不进 URL 的安全决策）。手机微信内链路完整可用（企微自动识别）。

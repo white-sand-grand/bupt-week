@@ -1,34 +1,25 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { buildAssignmentEntryUrl, buildAssignmentUrl } from '../src/utils/assignment-url.js'
+import { buildAssignmentUrl } from '../src/utils/assignment-url.js'
 
 /**
- * 交作业深链的组装规则。链接形态由 2026-10-24 的实测结论决定：
- * CAS 桌面皮肤从浏览器发起稳定 400（白屏），深链必须经 dev=1 入口绕开。
+ * 交作业深链的组装规则（2026-10-24 晚定稿：裸深链）。
+ * CAS dev=1 入口方案已证伪（带 CAS cookie 的浏览器稳定 400），
+ * 证据链见 docs/api-reference.md §3.2.1。
  */
 
-test('buildAssignmentUrl：最小深链带 assignmentId，不带凭证', () => {
+test('buildAssignmentUrl：最小深链带 assignmentId，不带凭证、不经 CAS', () => {
   const url = buildAssignmentUrl('hw-1')
   assert.equal(
     url,
     'https://ucloud.bupt.edu.cn/uclass/course.html#/student/assignmentDetails_fullpage?activeTabName=first&assignmentId=hw-1',
   )
   assert.equal(url.includes('refresh_token'), false, '长效凭证不进 URL')
+  assert.equal(url.includes('auth.bupt.edu.cn'), false, '不经 CAS 中转（其桌面登录页服务端故障）')
+  assert.equal(url.includes('dev=1'), false, 'dev=1 已证伪：带 CAS cookie 的浏览器稳定 400')
 })
 
-test('buildAssignmentEntryUrl：经 CAS dev=1 入口，深链整体作 service', () => {
-  const url = buildAssignmentEntryUrl('hw-1')
-  assert.match(url, /^https:\/\/auth\.bupt\.edu\.cn\/authserver\/login\?service=/)
-  assert.match(url, /&dev=1$/, '必须带 dev=1 绕开 CAS 皮肤 iframe 的 400 白屏')
-
-  const service = decodeURIComponent(new URL(url).searchParams.get('service'))
-  assert.equal(service, buildAssignmentUrl('hw-1'), 'service 就是完整深链（已实测 CAS 前缀匹配放行）')
-  assert.equal(url.includes('refresh_token'), false, '长效凭证不进 URL')
-})
-
-test('buildAssignmentEntryUrl：作业 ID 里的特殊字符被整体编码', () => {
-  const url = buildAssignmentEntryUrl('2113509887497789442')
-  // service 是一个完整的编码值，反解回来必须无损
-  const service = decodeURIComponent(new URL(url).searchParams.get('service'))
-  assert.ok(service.endsWith('assignmentId=2113509887497789442'))
+test('buildAssignmentUrl：作业 ID 被编码', () => {
+  const url = buildAssignmentUrl('2113509887497789442')
+  assert.ok(url.endsWith('assignmentId=2113509887497789442'))
 })

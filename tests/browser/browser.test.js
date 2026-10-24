@@ -1116,18 +1116,22 @@ test('作业：展开懒加载附件，「去交作业」经 CAS dev=1 入口指
     const attachment = await page.textContent('.attachment-list li button')
     assert.match(attachment, /lab0-handout\.pdf/)
 
-    // 入口链接：CAS 登录页 + dev=1（绕开桌面皮肤 iframe 的 400 白屏，2026-10-24 实测），
-    // 深链整体作 service——浏览器里已有云邮会话的人会被 CAS 自动直通到这份作业
+    // 深链：§3.2 的裸详情页 URL。不经 CAS 中转——其桌面登录页对现代浏览器
+    // 服务端故障（皮肤 400 白屏、dev=1 二次点击 400，见 api-reference §3.2.1）；
+    // 有云邮会话的浏览器直达，没有的靠文案引导（微信内企微自动识别不受影响）
     const href = await page.getAttribute('.go-submit', 'href')
-    assert.match(href, /^https:\/\/auth\.bupt\.edu\.cn\/authserver\/login\?service=/)
-    assert.match(href, /&dev=1$/)
-    const service = decodeURIComponent(new URL(href).searchParams.get('service'))
     assert.equal(
-      service,
+      href,
       'https://ucloud.bupt.edu.cn/uclass/course.html#/student/assignmentDetails_fullpage?activeTabName=first&assignmentId=hw-lab0',
     )
-    assert.equal(href.includes('refresh_token'), false, '入口不该携带长效凭证')
-    assert.equal(service.includes('studentAssignmentListPage'), false, '不能深链列表页（site-id cookie 缺口）')
+    assert.equal(href.includes('refresh_token'), false, '深链不该携带长效凭证')
+    assert.equal(href.includes('auth.bupt.edu.cn'), false, '不经 CAS 中转')
+    assert.equal(href.includes('studentAssignmentListPage'), false, '不能深链列表页（site-id cookie 缺口）')
+
+    // 引导文案：白屏时给出路（微信重试 / 稍后再试）
+    const hint = await page.textContent('.go-submit ~ .detail-hint')
+    assert.match(hint, /微信/)
+    assert.match(hint, /空白页/)
   } finally {
     await page.close()
   }

@@ -3,7 +3,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { auth } from '../composables/auth.js'
 import { assignmentsStore } from '../composables/assignments.js'
 import { downloadResource } from '../api/files.js'
-import { buildAssignmentEntryUrl } from '../utils/assignment-url.js'
+import { buildAssignmentUrl } from '../utils/assignment-url.js'
 import { deadlineProgress } from '../utils/deadline.js'
 import { formatUpdatedAt, beijingDateString } from '../utils/format.js'
 import { friendlyError } from '../utils/errors.js'
@@ -199,15 +199,19 @@ const groups = computed(() => assignmentsStore.groups.value)
               </ul>
             </template>
 
-            <!-- 经 CAS dev=1 入口：桌面浏览器直开深链会撞上 CAS 皮肤的 400 白屏
-                 （见 utils/assignment-url.js 注释），已登录的人则会被自动直通 -->
+            <!-- 新标签打开云邮提交页。浏览器已有云邮会话则直达；没有会话会被弹到
+                 统一身份认证，而学校的 CAS 桌面登录页对现代浏览器服务端故障（白屏，
+                 见 utils/assignment-url.js 注释）——微信内不受影响（企微自动识别） -->
             <a
               class="go-submit"
-              :href="buildAssignmentEntryUrl(assignment.id)"
+              :href="buildAssignmentUrl(assignment.id)"
               target="_blank"
               rel="noopener"
             >去交作业</a>
-            <p class="detail-hint">在云邮页面提交。已登录过云邮会直达这份作业；首次使用会先到统一身份认证登录页，登录后落在云邮首页——回到本页再点一次「去交作业」即可。</p>
+            <p class="detail-hint">
+              在云邮页面提交。已登录过云邮会直达这份作业；若打开后是空白页，
+              请在手机微信里打开本站再点（会自动识别企业微信身份），或稍后再试。
+            </p>
           </div>
         </article>
       </section>
