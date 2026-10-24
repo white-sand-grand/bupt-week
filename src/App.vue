@@ -109,7 +109,12 @@ onMounted(async () => {
     </nav>
 
     <main class="view">
-      <TimetableView v-if="view === 'timetable'" :ready="auth.jwglReady.value" />
+      <!-- degraded = 已登录但教务侧不可用（降级登录/企微登录），课表视图要给出黄条说明 -->
+      <TimetableView
+        v-if="view === 'timetable'"
+        :ready="auth.jwglReady.value"
+        :degraded="auth.loggedIn.value && !auth.jwglReady.value"
+      />
       <AssignmentView v-else :ready="auth.ucloudReady.value" />
     </main>
 

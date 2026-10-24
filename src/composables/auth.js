@@ -67,11 +67,16 @@ export const auth = {
       realName: data.ucloud.realName || '',
       expiresAt: data.expiresAt,
     }
-    jwgl.value = {
-      sessionId: data.jwgl.sessionId,
-      username: data.jwgl.username,
-      expiresAt: data.expiresAt,
-    }
+    // 教务侧降级（教务系统不可达，见登录接口的 jwglMessage）时 data.jwgl 为
+    // null：云邮照常登录，jwgl 侧置空（write(null) 会清掉残留的旧 key）。
+    // 与企微回流一样只建立单侧登录态，课表视图按「已登录但教务不可用」呈现。
+    jwgl.value = data.jwgl
+      ? {
+          sessionId: data.jwgl.sessionId,
+          username: data.jwgl.username,
+          expiresAt: data.expiresAt,
+        }
+      : null
     write(UCLOUD_KEY, ucloud.value)
     write(JWGL_KEY, jwgl.value)
     return data

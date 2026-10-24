@@ -52,6 +52,22 @@ const UCLOUD_SESSION = {
   data: { sessionId: 'uc-sid', username: '2021001234', realName: '张三', expiresAt: EXPIRES_AT },
 }
 
+/**
+ * 降级登录的响应：教务系统不可达（校外实测场景），云邮照常登录。
+ * jwgl 为 null + jwglMessage 说明原因，jwglVia 标记 'unavailable'。
+ */
+const LOGIN_JWGL_UNAVAILABLE = {
+  success: true,
+  data: {
+    ucloud: { sessionId: 'uc-sid', username: '2021001234', realName: '张三' },
+    jwgl: null,
+    jwglVia: 'unavailable',
+    jwglMessage:
+      '暂时连不上教务系统。教务系统一般仅限校园网内访问（校外可用学校 VPN），也可能正在临时维护；作业功能不受影响。',
+    expiresAt: EXPIRES_AT,
+  },
+}
+
 /** localStorage 里存的样子——只有 sessionId、学号、姓名、过期时间。 */
 const STORED_UCLOUD = {
   sessionId: 'uc-sid',
@@ -394,6 +410,49 @@ test('登录失败时展示后端给的人话错误，不暴露 stage', async ()
     assert.equal(notice.includes('cas-login'), false, 'stage 不该透给用户')
 
     assert.equal(await page.locator(`${panel} .logged-in`).count(), 0)
+  } finally {
+    await page.close()
+  }
+})
+
+test('降级登录：教务不可达时登录仍成功，课表给黄条说明，作业照常', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.route('**/api/auth/login', (route) => fulfill(route, LOGIN_JWGL_UNAVAILABLE))
+    await page.route('**/api/ucloud/session', (route) => fulfill(route, UCLOUD_SESSION))
+    await page.route('**/api/ucloud/assignments', (route) =>
+      fulfill(route, { success: true, data: { assignments: [] } }),
+    )
+
+    await page.goto(APP_ORIGIN, { waitUntil: 'networkidle' })
+    await page.fill(`${panel} input[type="text"]`, '2021001234')
+    await page.fill(`${panel} input[type="password"]`, 'pw')
+    await page.click(`${panel} button[type="submit"]`)
+
+    // 登录整体成功：面板收起，顶栏显示姓名
+    await page.waitForFunction(() => document.querySelectorAll('.panel').length === 0)
+    assert.match(await page.textContent('.topbar-auth'), /张三/)
+
+    // 默认视图是课表：必须是「教务不可用」黄条，而不是误导性的未登录空态
+    await page.waitForSelector('.view .notice-warn')
+    const notice = await page.textContent('.view .notice-warn')
+    assert.match(notice, /校园网/)
+    assert.match(notice, /作业功能不受影响/)
+    assert.equal(await page.locator('.view .empty').count(), 0)
+
+    // 切到作业视图：链路完全正常（mock 空列表 → 空态文案）
+    await page.click('.tabs button:nth-child(2)')
+    assert.equal(await page.textContent('.view h2'), '作业')
+    await page.waitForFunction(() => document.querySelector('.view .empty')?.textContent.includes('没有作业记录'))
+
+    // 本地只存云邮一侧；jwgl key 不能残留半套假会话
+    // （作业缓存 bupt-week-assignments-v1 允许存在，那是数据加速器不是登录态）
+    const stored = await page.evaluate(() => ({
+      ucloud: localStorage.getItem('bupt-week-ucloud-auth'),
+      jwgl: localStorage.getItem('bupt-week-jwgl-auth'),
+    }))
+    assert.ok(stored.ucloud, '云邮登录态应已保存')
+    assert.equal(stored.jwgl, null, '教务侧降级时不能残留 jwgl 登录态')
   } finally {
     await page.close()
   }

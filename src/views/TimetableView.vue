@@ -8,6 +8,8 @@ import { formatUpdatedAt, beijingDateString } from '../utils/format.js'
 const props = defineProps({
   /** 教务处登录态是否就绪。 */
   ready: { type: Boolean, default: false },
+  /** 已登录但教务侧不可用（降级登录/企微登录）：显示黄条说明而非未登录空态。 */
+  degraded: { type: Boolean, default: false },
 })
 
 const gridScroll = ref(null)
@@ -156,7 +158,14 @@ watch(() => props.ready, startSync)
       <button class="notice-action" type="button" @click="timetable.retry()">重试</button>
     </div>
 
-    <p v-if="!ready" class="empty">
+    <!-- 已登录但教务侧不可用（降级登录/企微登录）：黄条说明，区别于未登录空态 -->
+    <div v-if="!ready && degraded" class="notice notice-warn" role="status">
+      <span class="notice-text">
+        课表来自教务系统，本次登录没有建立教务会话——教务系统一般仅限校园网访问（校外可用学校 VPN），也可能正在维护。
+        作业功能不受影响；连上校园网后退出并重新登录即可获取课表。
+      </span>
+    </div>
+    <p v-else-if="!ready" class="empty">
       登录后可以查看课表。未登录也能浏览此页面，只是没有数据。
     </p>
     <p v-else-if="!weeks.length" class="empty">
