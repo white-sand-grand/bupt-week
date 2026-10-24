@@ -3,7 +3,7 @@ import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { auth } from '../composables/auth.js'
 import { timetable } from '../composables/timetable.js'
 import { currentTimetableWeek, groupTimetableCourses } from '../utils/timetable-cache.js'
-import { hainanPeriodTime } from '../utils/period-times.js'
+import { hainanPeriodTime, periodRange } from '../utils/period-times.js'
 import { formatUpdatedAt, beijingDateString } from '../utils/format.js'
 
 const props = defineProps({
@@ -16,6 +16,30 @@ const props = defineProps({
 const gridScroll = ref(null)
 /** 首次渲染后只自动定位一次「今天」列，用户手动切周/滚动后不再干预。 */
 let revealedToday = false
+
+// ── 节次时刻显示模式：双显（默认）/ 仅北京 / 仅海南 ──────────────────────────
+// 设备级偏好（不分账号），记住上次选择。
+const TIME_MODE_KEY = 'bupt-week-time-mode-v1'
+const TIME_MODES = ['both', 'bj', 'hn']
+const timeMode = ref(readTimeMode())
+
+function readTimeMode() {
+  try {
+    const saved = localStorage.getItem(TIME_MODE_KEY)
+    return TIME_MODES.includes(saved) ? saved : 'both'
+  } catch {
+    return 'both'
+  }
+}
+
+function setTimeMode(mode) {
+  timeMode.value = mode
+  try {
+    localStorage.setItem(TIME_MODE_KEY, mode)
+  } catch {
+    /* 隐私模式等存不进就算了，本次会话内仍生效 */
+  }
+}
 
 // ── 教务密码补填（降级登录的出路之一） ─────────────────────────────────────
 const passwordFormOpen = ref(false)
@@ -89,6 +113,17 @@ function courseColor(name) {
     hash = (hash * 31 + name.charCodeAt(i)) % 997
   }
   return `c${hash % PALETTE_SIZE}`
+}
+
+/** 悬停气泡：课名节次 + 两校区具体起止时刻 + 地点。两套时间都给——
+ *  气泡是对照用的，不随显示模式切换。 */
+function courseTooltip(course) {
+  const { bj, hn } = periodRange(course.start, course.end)
+  const lines = [`${course.name} ${course.schedule}`]
+  if (bj) lines.push(`北京 ${bj}`)
+  if (hn) lines.push(`海南 ${hn}`)
+  if (course.location) lines.push(course.location)
+  return lines.join('\n')
 }
 
 const syncBanner = computed(() => {
@@ -176,6 +211,18 @@ watch(() => props.ready, startSync)
           </svg>
         </button>
       </div>
+
+      <!-- 校区时刻切换：双显/北京/海南，双显为默认 -->
+      <div class="time-mode" role="group" aria-label="节次时刻校区">
+        <button
+          v-for="mode in [{ key: 'bj', label: '北京' }, { key: 'both', label: '双显' }, { key: 'hn', label: '海南' }]"
+          :key="mode.key"
+          type="button"
+          :class="{ active: timeMode === mode.key }"
+          :aria-pressed="timeMode === mode.key"
+          @click="setTimeMode(mode.key)"
+        >{{ mode.label }}</button>
+      </div>
     </header>
 
     <!-- 同步中：转圈 + 进度，让等待有反馈 -->
@@ -249,8 +296,8 @@ watch(() => props.ready, startSync)
           <tr v-for="period in periods" :key="period.number">
             <th class="period">
               <span class="period-number">{{ period.number }}</span>
-              <span class="period-time">京 {{ period.time }}</span>
-              <span v-if="hainanPeriodTime(period.number)" class="period-time period-time-hn">
+              <span v-if="timeMode !== 'hn'" class="period-time">京 {{ period.time }}</span>
+              <span v-if="timeMode !== 'bj' && hainanPeriodTime(period.number)" class="period-time period-time-hn">
                 琼 {{ hainanPeriodTime(period.number) }}
               </span>
             </th>
@@ -269,7 +316,7 @@ watch(() => props.ready, startSync)
                   :key="course.name + course.start"
                   class="course-item"
                   :class="courseColor(course.name)"
-                  :title="`${course.name} ${course.schedule} ${course.location}`"
+                  :title="courseTooltip(course)"
                 >
                   <strong class="course-name">{{ course.name }}</strong>
                   <span class="course-meta">{{ course.location }}</span>
@@ -284,7 +331,7 @@ watch(() => props.ready, startSync)
     <p class="note">
       课表来自教务处系统，与作业共用同一套统一身份认证，登录一次即可。
       数据按周缓存在本设备，切换周次不需要联网。
-      节次时间两行：京 = 北京时间，琼 = 海南时间（海南校区作息，上午相同、下午起略晚）。
+      节次时刻可按校区切换（双显/北京/海南）：琼 = 海南校区作息，上午与北京相同、下午起略晚。悬停课程卡可见具体起止时间。
       <span v-if="savedAtText">上次同步：{{ savedAtText }}。</span>
     </p>
   </section>
@@ -301,6 +348,37 @@ watch(() => props.ready, startSync)
   align-items: center;
   justify-content: space-between;
   gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+/* 校区时刻切换：与周切换器同一套语言，激活项品牌色胶囊 */
+.time-mode {
+  display: flex;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.time-mode button {
+  min-height: var(--touch);
+  padding: 0 0.7rem;
+  border: none;
+  background: none;
+  color: var(--ink-soft);
+  font: inherit;
+  font-size: 0.8125rem;
+  cursor: pointer;
+}
+
+.time-mode button + button {
+  border-left: 1px solid var(--line);
+}
+
+.time-mode button.active {
+  color: #fff;
+  font-weight: 500;
+  background: var(--brand-600);
 }
 
 h2 {

@@ -857,9 +857,25 @@ test('课表：登录后渲染网格，课程落在正确的星期与节次，�
     assert.match(times[0], /京 08:55~09:40/)
     assert.match(times[1], /琼 08:50~09:35/)
 
+    // 悬停气泡：两校区具体起止时刻（高数 [1-2]节 → 北京 08:00-09:35）
+    const title = await mondayCell.locator('.course-item').getAttribute('title')
+    assert.match(title, /高等数学 \[1-2\]节/)
+    assert.match(title, /北京 08:00-09:35/)
+    assert.match(title, /海南 08:00-09:35/)
+    assert.match(title, /教三-101/)
+
     // 周次下拉有同步到的两周
     const options = await page.locator('.week-picker option').allTextContents()
     assert.equal(options.length, 2)
+
+    // 校区切换：默认双显两行 → 切海南只剩一行（琼）→ 刷新后记忆保持
+    await page.click('.time-mode button:nth-child(3)')
+    await page.waitForFunction(() => document.querySelectorAll('.grid tbody tr:nth-child(2) .period-time').length === 1)
+    const only = await page.textContent('.grid tbody tr:nth-child(2) .period-time')
+    assert.match(only, /琼 08:50~09:35/)
+    await page.reload({ waitUntil: 'networkidle' })
+    await page.waitForSelector('.grid')
+    assert.equal(await page.locator('.grid tbody tr:nth-child(2) .period-time').count(), 1, '刷新后仍保持海南模式')
   } finally {
     await page.close()
   }

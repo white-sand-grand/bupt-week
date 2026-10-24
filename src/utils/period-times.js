@@ -17,3 +17,26 @@ export function hainanPeriodTime(number) {
   const slot = HAINAN_SLOT_TIMES[number - 1]
   return slot ? `${slot[0]}~${slot[1]}` : ''
 }
+
+/** 北京校区节次作息（14 节）——与后端 services/jwglweixin.js 的 SLOT_TIMES
+ *  逐字一致（where_to_study config.rs），改一处必须同步另一处。 */
+export const BEIJING_SLOT_TIMES = [
+  ['08:00', '08:45'], ['08:50', '09:35'], ['09:50', '10:35'], ['10:40', '11:25'],
+  ['11:30', '12:15'], ['13:00', '13:45'], ['13:50', '14:35'], ['14:45', '15:30'],
+  ['15:40', '16:25'], ['16:35', '17:20'], ['17:25', '18:10'], ['18:30', '19:15'],
+  ['19:20', '20:05'], ['20:10', '20:55'],
+]
+
+/**
+ * 节次区间 → 两校区的具体起止时刻（首节上课时间 - 末节下课时间）。
+ * 某校区没有这个区间（如第 15 节北京没有）时该侧给空串，调用方按需降级。
+ * @returns {{ bj: string, hn: string }} 如 { bj: '09:50-11:25', hn: '09:50-11:25' }
+ */
+export function periodRange(start, end) {
+  const pick = (table) => {
+    const from = table[start - 1]
+    const to = table[end - 1]
+    return from && to ? `${from[0]}-${to[1]}` : ''
+  }
+  return { bj: pick(BEIJING_SLOT_TIMES), hn: pick(HAINAN_SLOT_TIMES) }
+}
