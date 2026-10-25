@@ -1170,12 +1170,12 @@ test('移动端：今日列自动定位、重挂载后仍在、无横向溢出�
     )
     assert.ok(assignmentOverflow <= 0, `作业页横向溢出 ${assignmentOverflow}px`)
 
-    // 过滤态：头部同时摆着开关和计数徽标，窄屏也不允许溢出
+    // 全部态：头部同时摆着开关和计数徽标，窄屏也不允许溢出（默认过滤态上面量过了）
     await page.click('.filter-toggle')
-    const filterOverflow = await page.evaluate(
+    const allOverflow = await page.evaluate(
       () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
     )
-    assert.ok(filterOverflow <= 0, `过滤态作业页横向溢出 ${filterOverflow}px`)
+    assert.ok(allOverflow <= 0, `全部态作业页横向溢出 ${allOverflow}px`)
     await page.click('.filter-toggle')
 
     await page.click('.tabs button:nth-child(1)')
@@ -1252,6 +1252,9 @@ test('作业：按紧急度排序、按课程分组、状态徽标正确', async
     await loginAndOpenAssignments(page)
     await page.waitForSelector('.card')
 
+    // 默认只看未提交；这份断言看的是全量，先点「显示全部」
+    await page.click('.filter-toggle')
+
     // 全局排序后分组：最紧急的逾期作业所在课程在最前
     const groupNames = await page.locator('.course-group h3').allTextContents()
     assert.match(groupNames[0], /操作系统/)
@@ -1273,32 +1276,37 @@ test('作业：按紧急度排序、按课程分组、状态徽标正确', async
   }
 })
 
-test('作业：「只看未提交」开关——滤掉已提交，切回全部还原', async () => {
+test('作业：「只看未提交」默认开，点「显示全部」看全量再切回', async () => {
   const page = await browser.newPage()
   try {
     await loginAndOpenAssignments(page)
     await page.waitForSelector('.card')
-    assert.equal(await page.locator('.card').count(), 3)
 
-    // 打开过滤：已提交的「实验二 树」消失，按钮文案切到「显示全部」
-    await page.click('.filter-toggle')
+    // 默认过滤态：已提交的「实验二 树」不出现，按钮文案是下一动作「显示全部」
     assert.deepEqual(
       await page.locator('.card-title').allTextContents(),
       ['lab0 环境配置', '实验一 线性表'],
     )
     assert.match(await page.textContent('.filter-toggle'), /显示全部/)
 
-    // 切回全部：三张卡都在，分组标题也回来
+    // 切到全部：三张卡、两个分组都在，按钮文案切回「只看未提交」
     await page.click('.filter-toggle')
     assert.equal(await page.locator('.card').count(), 3)
     assert.equal(await page.locator('.course-group h3').count(), 2)
     assert.match(await page.textContent('.filter-toggle'), /只看未提交/)
+
+    // 再切回默认过滤态
+    await page.click('.filter-toggle')
+    assert.deepEqual(
+      await page.locator('.card-title').allTextContents(),
+      ['lab0 环境配置', '实验一 线性表'],
+    )
   } finally {
     await page.close()
   }
 })
 
-test('作业：「只看未提交」开着且全交了：给专门空态而不是「没有作业记录」', async () => {
+test('作业：全交了在默认过滤态直接落专门空态，可切「显示全部」看已提交', async () => {
   const page = await browser.newPage()
   try {
     const allSubmitted = ASSIGNMENTS_FIXTURE()
@@ -1308,14 +1316,16 @@ test('作业：「只看未提交」开着且全交了：给专门空态而不�
       submitTime: beijingClockFromNow(-72 * 3600_000),
     }))
     await loginAndOpenAssignments(page, allSubmitted)
+
+    // 默认只看未提交 + 全交了：不用点开关，空态直接出现
+    await page.waitForFunction(() => document.querySelector('.view .empty')?.textContent.includes('没有未提交的作业'))
+
+    // 切「显示全部」：已提交的卡看得到；再切回，空态重现
+    await page.click('.filter-toggle')
     await page.waitForSelector('.card')
     assert.equal(await page.locator('.card').count(), 3)
-
     await page.click('.filter-toggle')
     await page.waitForFunction(() => document.querySelector('.view .empty')?.textContent.includes('没有未提交的作业'))
-    // 空态下按钮还在，能切回去
-    await page.click('.filter-toggle')
-    await page.waitForSelector('.card')
   } finally {
     await page.close()
   }
@@ -1430,6 +1440,8 @@ test('作业：获取失败给人话和重试按钮，重试后恢复', async ()
     mode.fail = false
     await page.click('.notice-error .notice-action')
     await page.waitForSelector('.card')
+    // 默认只看未提交；这里验证的是数据完整性，切「显示全部」看全量
+    await page.click('.filter-toggle')
     const titles = await page.locator('.card-title').allTextContents()
     assert.deepEqual(titles, ['lab0 环境配置', '实验一 线性表', '实验二 树'])
   } finally {
@@ -1468,6 +1480,8 @@ test('作业：刷新失败兜底显示缓存数据（黄条说明，不再推�
     assert.match(warn, /缓存/, '黄条应说明数据来自缓存')
     assert.match(warn, /云邮系统暂时无法访问/, '失败原因要能看懂')
 
+    // 刷新重开过滤态回到默认；缓存数据完整性切「显示全部」验证
+    await page.click('.filter-toggle')
     const titles = await page.locator('.card-title').allTextContents()
     assert.deepEqual(titles, ['lab0 环境配置', '实验一 线性表', '实验二 树'], '缓存数据应照常渲染')
 

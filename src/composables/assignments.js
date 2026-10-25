@@ -39,9 +39,11 @@ function isUnsubmitted(item) {
   return !item.isCompleted && item.level !== 'missed'
 }
 
-/** 「只看未提交」开关：会话级（切视图重挂载不丢，退出登录重置）。
- *  作用范围就是本学期列表——往期作业在上游已经滤掉，这里不再重复判。 */
-const unsubmittedOnly = ref(false)
+/** 「只看未提交」开关：默认开——打开作业栏就是待办视角，想看全量再点。
+ *  会话级（切视图重挂载不丢），退出登录重置回默认。作用范围就是本学期
+ *  列表——往期作业在上游已经滤掉，这里不再重复判。 */
+const DEFAULT_UNSUBMITTED_ONLY = true
+const unsubmittedOnly = ref(DEFAULT_UNSUBMITTED_ONLY)
 
 function toggleUnsubmittedOnly() {
   unsubmittedOnly.value = !unsubmittedOnly.value
@@ -143,7 +145,7 @@ function reset() {
   error.value = ''
   stale.value = false
   savedAt.value = null
-  unsubmittedOnly.value = false
+  unsubmittedOnly.value = DEFAULT_UNSUBMITTED_ONLY
   expanded.value = {}
   attachments.value = {}
   attachmentState.value = {}
