@@ -1102,12 +1102,17 @@ test('课表：切换周次只读缓存，不再请求后端', async () => {
 // ── 移动端质量 ────────────────────────────────────────────────────────────────
 
 /** 把「今天」钉在周六的课表 mock：390px 视口下周六必然在横向滚动区外，
- *  今日列定位逻辑因此是确定性的（不随真实星期几波动）。
- *  周一 = 北京今天 - 5 天，周六 = 今天。 */
+ *  今日列定位逻辑因此是确定性的。夹具日期与测试里 context.clock 钉住的
+ *  浏览器时钟（2026-09-26，真实的周六）同源——「今天-5 天」这个构造只有
+ *  在真实今天恰为周六/周日时才与 currentTimetableWeek 的真实日历对齐
+ *  自洽（工作日会落在周窗口边界外，组件选中下一周，今天列直接消失），
+ *  钉钟后任何真实日期跑都是同一几何。钉过去而不是未来：会话 expiresAt
+ *  是按真实时钟发的，时钟拨到未来会被判成已过期。 */
+const CLOCK_SATURDAY = '2026-09-26'
 function mockTimetableTodayOnSaturday(route) {
   const body = route.request().postDataJSON() || {}
   const week = body.week ?? 18
-  const today = new Date(`${new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Shanghai' })}T00:00:00Z`)
+  const today = new Date(`${CLOCK_SATURDAY}T00:00:00Z`)
   const monday = new Date(today)
   monday.setUTCDate(monday.getUTCDate() - 5 + (week === 18 ? 0 : 7))
   const dayDate = (i) => {
@@ -1147,6 +1152,7 @@ test('移动端：今日列自动定位、重挂载后仍在、无横向溢出�
   const context = await browser.newContext({ viewport: { width: 390, height: 844 } })
   const page = await context.newPage()
   try {
+    await context.clock.setFixedTime(new Date(`${CLOCK_SATURDAY}T04:00:00Z`))
     await page.route('**/api/auth/login', (route) => fulfill(route, LOGIN_OK))
     await page.route('**/api/jwgl/session', (route) => fulfill(route, { success: true, data: { sessionId: 'jw-sid', username: '2021001234', expiresAt: EXPIRES_AT } }))
     await page.route('**/api/ucloud/session', (route) => fulfill(route, UCLOUD_SESSION))
@@ -1816,7 +1822,7 @@ test('课件：选课程 → 一页铺开多份资料 → 点文件名下载落�
 
 /** 班级接口的 mock：列表固定返回一个班，作业列表可动态追加。 */
 function mockClassesApi(page) {
-  const created = { classId: 'cls-1', code: '7XA4K2M9', name: '软件 2301 班' }
+  const created = { classId: 'cls-1', code: '7XA4K2M9Q3', name: '软件 2301 班' }
   const assignments = []
   let classExists = false
   page.route('**/api/classes/create', (route) => {
@@ -1923,7 +1929,7 @@ test('班级：可继续加入第二个班、作业按科目分组呈现、创�
       fulfill(route, { success: true, data: { assignments: [] } }))
 
     const classes = [
-      { classId: 'cls-1', code: '7XA4K2M9', name: '软件 2301 班', createdBy: '2021001234', memberCount: 2, createdAt: Date.now() },
+      { classId: 'cls-1', code: '7XA4K2M9Q3', name: '软件 2301 班', createdBy: '2021001234', memberCount: 2, createdAt: Date.now() },
     ]
     const assignments = {
       'cls-1': [
@@ -1955,7 +1961,7 @@ test('班级：可继续加入第二个班、作业按科目分组呈现、创�
     })
     page.route('**/api/classes/join', (route) => {
       const body = route.request().postDataJSON() || {}
-      assert.equal(body.code, 'Q2W3E4R5')
+      assert.equal(body.code, 'Q2W3E4R5T7')
       classes.push({ classId: 'cls-2', code: body.code, name: '物联网 2301 班', createdBy: '2021999888', memberCount: 5, createdAt: Date.now() })
       assignments['cls-2'] = []
       return fulfill(route, { success: true, data: { classId: 'cls-2', name: '物联网 2301 班' } })
@@ -1980,7 +1986,7 @@ test('班级：可继续加入第二个班、作业按科目分组呈现、创�
     await page.click('.view .entry-toggle:has-text("加入或创建班级")')
 
     const joinForm = page.locator('.view .entry-form').first()
-    await joinForm.locator('input[maxlength="8"]').fill('Q2W3E4R5')
+    await joinForm.locator('input[maxlength="10"]').fill('Q2W3E4R5T7')
     await joinForm.locator('input[type="password"]').fill('join-pw')
     await joinForm.locator('button[type="submit"]').click()
 
@@ -2006,6 +2012,67 @@ test('班级：可继续加入第二个班、作业按科目分组呈现、创�
     await page.waitForFunction(() => document.querySelector('.view .class-card')?.textContent.includes('物联网 2301 班'))
     assert.equal(await page.locator('.view .class-picker').count(), 0, '只剩一个班，不需要切换器')
     assert.equal(await page.locator('.view .dissolve-button').count(), 0, '非创建者看不到解散按钮')
+  } finally {
+    await page.close()
+  }
+})
+
+test('班级：作业 tab 展开班级作业——去交作业置灰不可点、不再打云邮附件接口', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.route('**/api/auth/login', (route) => fulfill(route, LOGIN_OK))
+    await page.route('**/api/ucloud/session', (route) => fulfill(route, UCLOUD_SESSION))
+    await page.route('**/api/ucloud/assignments', (route) =>
+      fulfill(route, { success: true, data: { assignments: [] } }))
+    page.route('**/api/classes/list', (route) =>
+      fulfill(route, {
+        success: true,
+        data: {
+          classes: [{ classId: 'cls-1', code: '7XA4K2M9Q3', name: '软件 2301 班', createdBy: '2021999888', memberCount: 3, createdAt: Date.now() }],
+        },
+      }))
+    page.route('**/api/classes/assignments', (route) =>
+      fulfill(route, {
+        success: true,
+        data: {
+          assignments: [{
+            id: 'ca-1',
+            assignmentTitle: '第三章习题',
+            chapterName: '高等数学',
+            siteId: 'class:cls-1',
+            siteName: '软件 2301 班',
+            assignmentEndTime: '2026-11-01 23:59',
+            assignmentStatus: 99,
+            content: 'P55 1-10 题，交到学委邮箱。',
+            createdBy: '2021999888',
+          }],
+        },
+      }))
+    let detailAsked = false
+    page.route('**/api/ucloud/assignment/detail', (route) => {
+      detailAsked = true
+      return fulfill(route, { success: true, data: { attachments: [] } })
+    })
+
+    await page.goto(APP_ORIGIN, { waitUntil: 'networkidle' })
+    await page.fill(`${panel} input[type="text"]`, '2021001234')
+    await page.fill(`${panel} input[type="password"]`, 'pw')
+    await page.click(`${panel} button[type="submit"]`)
+    await page.waitForFunction(() => document.querySelectorAll('.panel').length === 0)
+    await page.click('.tabs button:nth-child(2)')
+    await page.waitForSelector('.view .card')
+
+    // 展开班级作业卡：按钮置灰（disabled 且无 href），文案改讲班级作业的去处
+    await page.click('.view .card-main')
+    await page.waitForSelector('.view .go-submit')
+    assert.ok(await page.locator('.view .go-submit').isDisabled(), '班级作业没有云邮提交页，按钮应置灰')
+    assert.equal(await page.getAttribute('.view .go-submit', 'href'), null, '不应带跳转地址')
+    const hint = await page.textContent('.view .go-submit ~ .detail-hint')
+    assert.match(hint, /不在云邮系统/)
+
+    // 附件区空手落定显示「没有附件」，而不是拿 UUID 去打云邮详情接口吃假报错
+    await page.waitForFunction(() => document.querySelector('.view .detail-hint')?.textContent.includes('没有附件'))
+    assert.equal(detailAsked, false, '班级作业不该请求云邮附件详情')
   } finally {
     await page.close()
   }

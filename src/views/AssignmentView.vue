@@ -241,16 +241,22 @@ const groups = computed(() => assignmentsStore.groups.value)
               </ul>
             </template>
 
-            <!-- 新标签打开云邮提交页。浏览器已有云邮会话则直达；没有会话会被弹到
-                 统一身份认证，而学校的 CAS 桌面登录页对现代浏览器服务端故障（白屏，
-                 见 utils/assignment-url.js 注释）——微信内不受影响（企微自动识别） -->
+            <!-- 云邮作业：新标签打开云邮提交页。浏览器已有云邮会话则直达；没有会话会被
+                 弹到统一身份认证，而学校的 CAS 桌面登录页对现代浏览器服务端故障（白屏，
+                 见 utils/assignment-url.js 注释）——微信内不受影响（企微自动识别）。
+                 班级录入的作业不在云邮系统里，按钮置灰不给跳转。 -->
             <a
+              v-if="!isClassAssignment(assignment)"
               class="go-submit"
               :href="buildAssignmentUrl(assignment.id)"
               target="_blank"
               rel="noopener"
             >去交作业</a>
-            <p class="detail-hint">
+            <button v-else class="go-submit" type="button" disabled>去交作业</button>
+            <p v-if="isClassAssignment(assignment)" class="detail-hint">
+              班级录入的作业不在云邮系统里，没有在线提交入口；提交方式写在作业内容里。
+            </p>
+            <p v-else class="detail-hint">
               在云邮页面提交。已登录过云邮会直达这份作业；若打开后是空白页，
               请在手机微信里打开本站再点（会自动识别企业微信身份），或稍后再试。
             </p>
@@ -679,6 +685,15 @@ h3 {
 
 .go-submit:active {
   filter: brightness(0.96);
+}
+
+/* 班级录入的作业没有云邮提交页：置灰占位，别让同学去点一个不存在的跳转 */
+.go-submit:disabled {
+  border-color: var(--line);
+  color: var(--muted);
+  background: var(--surface-sunken);
+  box-shadow: none;
+  cursor: not-allowed;
 }
 
 .note {

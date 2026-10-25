@@ -213,8 +213,8 @@ watch(() => auth.ucloudReady.value, startLoad)
         </button>
         <form v-if="joinOpen" class="entry-form" @submit.prevent="submitJoin">
           <label class="field">
-            <span>班级号（8 位）</span>
-            <input v-model="joinCode" type="text" placeholder="如 7XA4K2M9" maxlength="8" autocomplete="off" required />
+            <span>班级号（10 位）</span>
+            <input v-model="joinCode" type="text" placeholder="如 7XA4K2M9Q3" maxlength="10" autocomplete="off" required />
           </label>
           <label class="field">
             <span>班级密码</span>
@@ -274,8 +274,8 @@ watch(() => auth.ucloudReady.value, startLoad)
             <p class="form-head">凭班级号加入</p>
             <div class="form-grid">
               <label class="field">
-                <span>班级号（8 位）</span>
-                <input v-model="joinCode" type="text" placeholder="如 7XA4K2M9" maxlength="8" autocomplete="off" required />
+                <span>班级号（10 位）</span>
+                <input v-model="joinCode" type="text" placeholder="如 7XA4K2M9Q3" maxlength="10" autocomplete="off" required />
               </label>
               <label class="field">
                 <span>班级密码</span>

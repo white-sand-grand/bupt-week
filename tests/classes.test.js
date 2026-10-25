@@ -63,12 +63,12 @@ test('password-hash：同盐同密码可验证，错密码/异盐不可', async 
 
 // ── 创建 / 加入 ──────────────────────────────────────────────────────────────
 
-test('create：返回班级号（8 位无歧义字符表），密码不落明文', async () => {
+test('create：返回班级号（10 位无歧义字符表），密码不落明文', async () => {
   const { app, classStore, sessionStore, seedClass } = makeApp()
   await seedUcloud(sessionStore)
   const data = await seedClass()
 
-  assert.match(data.code, /^[2-9A-HJ-NP-Z]{8}$/, '班级号 8 位且不含 0/O/1/I/L')
+  assert.match(data.code, /^[2-9A-HJ-NP-Z]{10}$/, '班级号 10 位且不含 0/O/1/I/L')
   assert.equal(data.name, '软件 2301 班')
 
   const stored = JSON.stringify(await classStore.get(`class:${data.classId}`))
@@ -118,6 +118,25 @@ test('join：小写班级号自动归一；不存在的班级号报 404', async 
 
   const missing = await post(app, '/api/classes/join', { sessionId: 'uc2', code: '23456789', password: 'x' })
   assert.equal(missing.status, 404)
+})
+
+test('join：历史 8 位班级号仍可加入；9 位两头不沾报 400', async () => {
+  const { app, sessionStore, classStore } = makeApp()
+  const legacy = '7XA4K2M9'
+  const classId = 'legacy-1'
+  const salt = await newSalt()
+  await classStore.set(`class:${classId}`, {
+    id: classId, code: legacy, name: '旧班', passHash: await hashPassword('class-pw', salt),
+    salt, createdAt: Date.now(), createdBy: '2021001234', expiresAt: Date.now() + 86400000,
+  })
+  await classStore.set(`code:${legacy}`, { classId, expiresAt: Date.now() + 86400000 })
+  await seedUcloud(sessionStore, 'uc2', '2021567890')
+
+  const ok = await post(app, '/api/classes/join', { sessionId: 'uc2', code: legacy, password: 'class-pw' })
+  assert.equal((await ok.json()).success, true, '上线初期发出的 8 位码不作废')
+
+  const odd = await post(app, '/api/classes/join', { sessionId: 'uc2', code: '23456789A', password: 'class-pw' })
+  assert.equal(odd.status, 400, '9 位既不是新规 10 位也不是旧规 8 位')
 })
 
 test('list：只返回我的班级，且不带密码哈希/盐', async () => {

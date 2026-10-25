@@ -23,7 +23,9 @@ import { hashPassword, newSalt, verifyPassword } from '../services/password-hash
 const CLASS_TTL_MS = 365 * 86400000
 // 班级号字符表：去掉易混淆的 0/O/1/I/L，抄进纸条念给人听也不出错
 const CODE_ALPHABET = '23456789ABCDEFGHJKMNPQRSTUVWXYZ'
-const CODE_LENGTH = 8
+const CODE_LENGTH = 10
+// 历史 8 位班级号仍可加入：功能上线初期发出去的 8 位码不作废，只对新班生效
+const CODE_LEGACY_PATTERN = /^[2-9A-HJ-NP-Z]{8}$/
 const MAX_CLASSES_PER_USER = 8
 const MAX_ASSIGNMENTS_PER_CLASS = 200
 const MAX_MEMBERS = 100
@@ -120,7 +122,7 @@ export function createClassesRoutes({ getSessionStore, getClassStore }) {
     const salt = await newSalt()
     const passHash = await hashPassword(password, salt)
 
-    // 班级号碰撞重试：8 位 31 进制空间约 8500 亿，实际一次就中
+    // 班级号碰撞重试：10 位 31 进制空间约 820 万亿，实际一次就中
     let code = makeCode()
     for (let attempt = 0; (await classStore.get(`code:${code}`)) && attempt < 5; attempt += 1) {
       code = makeCode()
@@ -144,8 +146,8 @@ export function createClassesRoutes({ getSessionStore, getClassStore }) {
     const username = session.username
 
     const cleanCode = text(code).toUpperCase()
-    if (!/^[2-9A-HJ-NP-Z]{8}$/.test(cleanCode)) {
-      throw new ApiError(400, { stage: 'class-input', msg: '班级号是 8 位字母数字（不含 0/O/1/I/L）' })
+    if (!/^[2-9A-HJ-NP-Z]{10}$/.test(cleanCode) && !CODE_LEGACY_PATTERN.test(cleanCode)) {
+      throw new ApiError(400, { stage: 'class-input', msg: '班级号是 10 位字母数字（不含 0/O/1/I/L）' })
     }
 
     const index = await readRecord(classStore, `code:${cleanCode}`)

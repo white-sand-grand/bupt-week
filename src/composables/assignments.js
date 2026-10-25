@@ -126,8 +126,21 @@ async function toggle(id) {
   await loadAttachments(id)
 }
 
+/** 这份 id 是否班级手动录入的作业：班级分组的条目全来自班级（courseId 形如 class:{id}）。 */
+function isClassAssignmentId(id) {
+  return classesStore.classGroups.value.some((group) =>
+    group.items.some((item) => item.id === id))
+}
+
 async function loadAttachments(id) {
   if (attachments.value[id] || attachmentState.value[id] === 'loading') return
+  // 班级录入的作业不在云邮系统里：附件恒为空。拿它的 UUID 去打云邮详情接口
+  // 必然失败，会让同学看到假的「附件加载失败」，所以直接空手落定。
+  if (isClassAssignmentId(id)) {
+    attachments.value = { ...attachments.value, [id]: [] }
+    attachmentState.value = { ...attachmentState.value, [id]: 'done' }
+    return
+  }
   attachmentState.value = { ...attachmentState.value, [id]: 'loading' }
   try {
     const detail = await fetchAssignmentDetail(auth.sessionIdFor('ucloud'), id)
