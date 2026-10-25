@@ -26,3 +26,9 @@ id = "caf63daeb019431c923418f19e9addb7"
 [[kv_namespaces]]
 binding = "SESSIONS"
 id = "09f026b17cb2401da4b1c89bb3b43a23"
+
+# 国内可达：*.workers.dev 被墙，绑自定义域名绕开（见 docs/deployment.md「国内可达」）。
+# 域名需先接入本 Cloudflare 账号（免费计划，NS 方式）并等 zone 激活，再取消下面两行
+# 的注释、替换成真实域名后 wrangler deploy——证书和 DNS 由 Cloudflare 自动处理。
+# 改后端地址后，记得同步更新仓库变量 VITE_BACKEND_URL 并重新构建前端。
+# routes = [{ pattern = "api.<你的域名>", custom_domain = true }]

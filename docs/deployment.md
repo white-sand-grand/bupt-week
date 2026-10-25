@@ -66,6 +66,44 @@ npx wrangler dev          # 本地模拟 Workers 运行时，含 KV
 
 **不要跳过这一步直接 deploy。** KV 的最终一致性、`getSetCookie` 的可用性、冷启动行为，都值得在本地先撞一次。
 
+### 国内可达：workers.dev 被墙的两个解法 【实测 2026-10-26】
+
+`*.workers.dev` 在国内被 DNS 污染 + 连接层封锁（本机解析到 Facebook IP，`--resolve` 指真实 CF IP 也是 000），手机蜂窝流量部分运营商能通、家宽/校园网普遍不通。**封的是 `workers.dev` 这个域名，不是 Cloudflare 整体**——绑自定义域名即可绕开。本机实测数据（同一网络）：
+
+| 目标 | 结果 |
+|---|---|
+| `*.workers.dev` | 000，完全不通 |
+| CF 自定义域上的知名服务（gh-proxy.com） | 200，TTFB 3.2s——可达但慢 |
+| 腾讯 EdgeOne（edgeone.ai / *.edgeone.app） | 200，0.45–1.7s——腾讯香港节点，国内体验好 |
+| 前端 `github.io` | 200，0.95s——前端当前可达，不用动 |
+
+**解法 A：Worker 绑自定义域名（推荐，改动≈0）**
+
+1. 弄一个域名：买一个（.top/.xyz 首年 ¥10 内）或用免费域（如 DigitalPlat dpdns.org，需实名审核，免费域名有失效风险，正式用建议付费）。
+2. 域名接入 Cloudflare（免费计划，注册商处改 NS，等 zone 激活）。
+3. `wrangler.toml` 加一行路由（zone 激活前 deploy 会报错，先加域再加这行）：
+
+   ```toml
+   routes = [{ pattern = "api.<你的域名>", custom_domain = true }]
+   ```
+
+4. `npx wrangler deploy`——Cloudflare 自动签证书、建 DNS，无需手动配。
+5. 仓库 **Settings → Variables → Actions** 把 `VITE_BACKEND_URL` 从 workers.dev 改成 `https://api.<你的域名>`，推送 master 让 Pages 重建（它是构建期变量，改了必须重构建）。
+6. `CORS_ORIGINS`/`FRONTEND_URL` 不用动（前端 origin 没变）；企微回调地址按请求 Host 推导，自动跟随新域。
+7. 验收：家宽/校园网无代理打开前端 → 登录 → 看作业，全通。
+
+速度预期：国内用户落到 CF 海外节点，TTFB 1–3s（见实测），晚高峰可能更差。本项目请求本身要多跳学校服务器，占比可接受。想提速可玩 CloudflareSpeedTest 优选 IP，但那是另一个坑，先不展开。
+
+**解法 B：整体迁腾讯 EdgeOne Pages（国内体验最好，半天～一天工作量）**
+
+EdgeOne Pages（腾讯，免费）官方提供 Hono 模板与 CF 迁移文档，默认域 `*.edgeone.app` 免备案、非大陆可用区（香港节点）国内实测可达。迁移点：
+
+- 入口：写 `functions/[[default]].js` catch-all 把请求转给现有 Hono app（约 20 行，`server/app.js` 零改动）。
+- KV：EdgeOne KV **key 只允许字母数字下划线**——现有 key 含 `:`（`class:{uuid}:members` 等）和 `-`（UUID），需要一层 key 转义适配器（`storage/` 本来就是注入式，加一个 EdgeOneKvStore 即可）；`put` 无 TTL 参数，但本项目判活靠值内 `expiresAt`（is-live 契约），只影响垃圾回收不影响正确性。
+- 全链路重验收：CAS/企微 OAuth/文件代理/深链都要在新域上再点一遍。
+
+结论：先用解法 A 当天解决可用性；EdgeOne 留作国内体验有硬需求时的后续选项。
+
 ## 4. 前端部署
 
 前端需要知道后端地址，构建时注入：
