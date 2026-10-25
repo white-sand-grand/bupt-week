@@ -79,18 +79,24 @@ const HEARTBEAT_MIN_GAP_MS = 60 * 1000
 let lastHeartbeatAt = 0
 
 async function heartbeat() {
-  if (!ucloud.value || document.visibilityState !== 'visible') return
+  const current = ucloud.value
+  if (!current || document.visibilityState !== 'visible') return
   if (Date.now() - lastHeartbeatAt < HEARTBEAT_MIN_GAP_MS) return
   lastHeartbeatAt = Date.now()
   try {
-    const data = await checkUcloudSession(ucloud.value.sessionId)
+    const data = await checkUcloudSession(current.sessionId)
+    // 探活期间可能已登出/换号：迟到的响应把登录态写回等于「退出后又复活」
+    if (ucloud.value?.sessionId !== current.sessionId) return
     ucloud.value = { ...ucloud.value, ...data }
     write(UCLOUD_KEY, ucloud.value)
   } catch (error) {
     // 与 restore 同语义：明确 401 才清本地态，网络错误保留
     if (error instanceof ApiError && error.status === 401) {
-      ucloud.value = null
-      write(UCLOUD_KEY, null)
+      // 401 也一样：只清「还是那次探活的会话」，别误伤期间换上的新登录
+      if (ucloud.value?.sessionId === current.sessionId) {
+        ucloud.value = null
+        write(UCLOUD_KEY, null)
+      }
     }
   }
 }
@@ -148,6 +154,8 @@ export const auth = {
    */
   async adoptWecomSession(sessionId) {
     const data = await checkUcloudSession(sessionId)
+    // 校验在途时用户可能已经手动登出/登录：晚到的回流不覆盖现场
+    if (ucloud.value) return
     ucloud.value = {
       sessionId: data.sessionId,
       username: data.username || '',
@@ -183,28 +191,40 @@ export const auth = {
    * 会话失效，本地态保留，下次进页面再试——服务端会话其实还活着。
    */
   async restore() {
+    // 快照先取好：探活在途时可能登出/换号，回来后要跟快照比对再落地
+    const ucloudId = ucloud.value?.sessionId
+    const jwglId = jwgl.value?.sessionId
     const results = await Promise.allSettled([
-      ucloud.value ? checkUcloudSession(ucloud.value.sessionId) : Promise.resolve(null),
-      jwgl.value ? checkJwglSession(jwgl.value.sessionId) : Promise.resolve(null),
+      ucloudId ? checkUcloudSession(ucloudId) : Promise.resolve(null),
+      jwglId ? checkJwglSession(jwglId) : Promise.resolve(null),
     ])
 
     const [ucloudResult, jwglResult] = results
     const invalid = (result) => result.reason instanceof ApiError && result.reason.status === 401
 
     if (ucloudResult.status === 'fulfilled' && ucloudResult.value) {
-      ucloud.value = { ...ucloud.value, ...ucloudResult.value }
-      write(UCLOUD_KEY, ucloud.value)
+      if (ucloud.value?.sessionId === ucloudId) {
+        ucloud.value = { ...ucloud.value, ...ucloudResult.value }
+        write(UCLOUD_KEY, ucloud.value)
+      }
     } else if (ucloudResult.status === 'rejected' && invalid(ucloudResult)) {
-      ucloud.value = null
-      write(UCLOUD_KEY, null)
+      // 只清「还是那次探活的会话」：在途期间换上的新登录不能被误伤
+      if (ucloud.value?.sessionId === ucloudId) {
+        ucloud.value = null
+        write(UCLOUD_KEY, null)
+      }
     }
 
     if (jwglResult.status === 'fulfilled' && jwglResult.value) {
-      jwgl.value = { ...jwgl.value, ...jwglResult.value }
-      write(JWGL_KEY, jwgl.value)
+      if (jwgl.value?.sessionId === jwglId) {
+        jwgl.value = { ...jwgl.value, ...jwglResult.value }
+        write(JWGL_KEY, jwgl.value)
+      }
     } else if (jwglResult.status === 'rejected' && invalid(jwglResult)) {
-      jwgl.value = null
-      write(JWGL_KEY, null)
+      if (jwgl.value?.sessionId === jwglId) {
+        jwgl.value = null
+        write(JWGL_KEY, null)
+      }
     }
 
     return Boolean(ucloud.value || jwgl.value)

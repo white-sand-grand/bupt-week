@@ -10,7 +10,9 @@
 export const ASSIGNMENTS_KEY = 'bupt-week-assignments-v1'
 
 export function validateAssignmentsCache(value) {
-  return value?.version === 1 && typeof value.username === 'string'
+  // username 必须非空：空串会让所有「上游没给学号」的账号共享同一份缓存
+  // （企微回流路径就可能拿到空学号），击穿按账号隔离的约定
+  return value?.version === 1 && typeof value.username === 'string' && value.username !== ''
     && typeof value.savedAt === 'string' && Number.isFinite(Date.parse(value.savedAt))
     && Array.isArray(value.records)
     && value.records.every((record) => record && record.id !== undefined && record.id !== null)

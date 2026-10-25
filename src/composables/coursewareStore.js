@@ -1,6 +1,7 @@
 import { computed, readonly, ref, watch } from 'vue'
 import { auth } from './auth.js'
 import { fetchCourses, fetchCourseware } from '../api/courseware.js'
+import { flattenTree } from '../utils/courseware-tree.js'
 import { friendlyError } from '../utils/errors.js'
 
 /**
@@ -8,7 +9,7 @@ import { friendlyError } from '../utils/errors.js'
  *
  * 树按 siteId 缓存在内存（不落盘——课件列表大、时效要求低，退出登录即清），
  * 拉平成「目录行 + 文件行」的一维列表给视图直接渲染：一门课的所有资料
- * 一页铺开，多份文件滚动可见。
+ * 一页铺开，多份文件滚动可见。拉平逻辑在 utils/courseware-tree.js（纯函数）。
  */
 
 const courses = ref([])
@@ -16,45 +17,6 @@ const coursesState = ref('idle') // idle | loading | done | error
 const coursesError = ref('')
 const currentSiteId = ref('')
 const trees = ref({}) // siteId -> { state, rows, error }
-
-/** 拉平资料树：目录节点与它挂的附件各成一行，children 递归。
- *  字段名按防御式读取（上游存在别名）。 */
-function flattenTree(nodes, depth = 0, prefix = '') {
-  if (!Array.isArray(nodes)) return []
-  return nodes.flatMap((node, index) => {
-    if (!node || typeof node !== 'object') return []
-    const nodeKey = `${prefix}${node.id || node.resourceId || index}`
-
-    const fileRows = toArray(node.attachmentVOs ?? node.attachments).map((attachment, i) => {
-      const resource = attachment?.resource || {}
-      const isLink = String(attachment?.type) === '2' || Boolean(attachment?.siteResourceLink?.link)
-      return {
-        key: `${nodeKey}-file-${resource.id || attachment?.id || i}`,
-        depth: depth + 1,
-        isLink,
-        name: isLink
-          ? attachment.siteResourceLink?.title || attachment.siteResourceLink?.link || '外部链接'
-          : resource.name || resource.fileName || attachment?.name || '未命名附件',
-        resourceId: resource.id || resource.resourceId || '',
-        // fileSizeUnit 上游给的是「2.5MB」这类现成文案，ext 是不带点的后缀
-        meta: isLink ? '外部链接' : [resource.ext, resource.fileSizeUnit].filter(Boolean).join(' · '),
-        link: isLink ? attachment.siteResourceLink?.link || '' : '',
-      }
-    })
-
-    return [
-      {
-        key: `node-${nodeKey}`,
-        depth,
-        isNode: true,
-        name: node.resourceName || node.name || node.title || '未命名资料',
-        meta: node.resourceTypeName || '',
-      },
-      ...fileRows,
-      ...flattenTree(node.children, depth + 1, `${nodeKey}.`),
-    ]
-  })
-}
 
 function toArray(value) {
   return Array.isArray(value) ? value : []

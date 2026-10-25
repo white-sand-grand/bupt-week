@@ -168,3 +168,77 @@ test('friendlyError：message 是对象/循环结构时不抛（String() 兜底�
   assert.equal(typeof text, 'string')
   assert.ok(text.length > 0)
 })
+
+// ── 2026-10-25 对抗加固轮：钉住当轮修复的回归口 ────────────────────────────
+
+test('beijingTimestamp：形态漂移的串一律 NaN，不落回设备本地时区解释', () => {
+  // 这些串 V8 的宽容 Date.parse 都「能解析」：纯日期按 UTC 午夜、
+  // 单位数/前导空格/毫秒按本地钟——在北京时区外静默差 8~16 小时，
+  // 「今天截止」的翻转时刻会被设备时区劫持。必须 NaN。
+  const drifted = [
+    '2026-10-24',                // 纯日期（V8 按 UTC 午夜）
+    '2026-1-1',                  // 单位数月日
+    '2026/10/24 10:00',          // 斜杠分隔
+    ' 2026-10-24 10:00',         // 前导空格
+    '2026-10-24 10:00:00.500',   // 毫秒
+    '2026-10-24T10:00:00.500',
+  ]
+  for (const value of drifted) {
+    assert.ok(Number.isNaN(beijingTimestamp(value)), `${value} 应拒收（NaN），不得按设备时区解释`)
+  }
+  // 带显式时区标注的串没有歧义：原样解析的行为保留
+  assert.equal(beijingTimestamp('2026-10-24T23:59:00Z'), Date.parse('2026-10-24T23:59:00Z'))
+  assert.equal(beijingTimestamp('2026-10-24T23:59:00+09:00'), Date.parse('2026-10-24T23:59:00+09:00'))
+})
+
+test('作业缓存：空串 username 不是合法账号键，写读两侧都拒收', () => {
+  const storage = {
+    store: {},
+    getItem(key) { return this.store[key] ?? null },
+    setItem(key, value) { this.store[key] = String(value) },
+    removeItem(key) { delete this.store[key] },
+  }
+  // 企微回流路径可能拿到空学号：空串若放行，所有这类账号共享同一份缓存
+  assert.equal(writeAssignmentsCache(storage, '', [{ id: 'a' }]), null, '空 username 不落盘')
+  assert.equal(storage.store['bupt-week-assignments-v1'], undefined)
+  // 纵有人手工塞了一份空 username 的缓存进来，校验也要判它不可信
+  storage.store['bupt-week-assignments-v1'] = JSON.stringify({
+    version: 1, username: '', savedAt: new Date().toISOString(), records: [{ id: 'a' }],
+  })
+  assert.equal(validateAssignmentsCache(JSON.parse(storage.store['bupt-week-assignments-v1'])), false)
+  assert.equal(readAssignmentsCache(storage, ''), null)
+})
+
+test('课表缓存：空串 username 同样拒收', () => {
+  assert.equal(validateTimetableCache({ version: 1, username: '', savedAt: '2026-10-25T00:00:00Z', weeks: [] }), false)
+})
+
+test('课件拉平：外链只放行 http(s)，下载不了的行不出现，超深树不爆栈', async () => {
+  const { flattenTree } = await import('../src/utils/courseware-tree.js')
+  const rows = flattenTree([{
+    id: 'n1',
+    attachmentVOs: [
+      { type: '2', siteResourceLink: { title: '投毒链接', link: 'javascript:fetch("/api/")' } },
+      { type: '2', siteResourceLink: { title: '数据协议', link: 'data:text/html,<script>1</script>' } },
+      { type: '2', siteResourceLink: {} },
+      { type: '1', resource: { name: '正常课件.pdf', id: 'r1' } },
+      { type: '1', resource: {} },
+      { siteResourceLink: { link: 'https://teacher.example.com/syllabus' } },
+    ],
+  }])
+
+  const fileRows = rows.filter((row) => !row.isNode)
+  const links = fileRows.filter((row) => row.isLink)
+  // javascript:/data:/空链接全部出局，合法 http 外链保留
+  assert.equal(links.length, 1)
+  assert.equal(links[0].link, 'https://teacher.example.com/syllabus')
+  // 没有 resourceId 的文件行不渲染（点了必 400，还共用 '' 进度键）
+  const downloadRows = fileRows.filter((row) => !row.isLink)
+  assert.deepEqual(downloadRows.map((row) => row.name), ['正常课件.pdf'])
+
+  // 万层深树：截断而不是 RangeError
+  let deep = { id: 'leaf', attachmentVOs: [{ type: '1', resource: { id: 'x', name: '深处的文件' } }] }
+  for (let i = 0; i < 5000; i += 1) deep = { id: `d${i}`, children: [deep] }
+  const flattened = flattenTree([deep])
+  assert.ok(Array.isArray(flattened) && flattened.length < 100, '超深树按深度上限截断')
+})

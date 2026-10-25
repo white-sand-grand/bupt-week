@@ -733,6 +733,50 @@ test('退出登录会调后端并清掉本地状态', async () => {
   }
 })
 
+test('对抗：登出后在途心跳不能把登录态写回（退出不复活）', async () => {
+  const page = await browser.newPage()
+  let releaseProbe = () => {}
+  try {
+    // 心跳探活的响应捏在闸里：等用户登出完成后再放行，模拟慢上游
+    const probeGate = new Promise((resolve) => { releaseProbe = resolve })
+    await page.route('**/api/auth/login', (route) => fulfill(route, LOGIN_OK))
+    await page.route('**/api/jwgl/session', (route) => fulfill(route, { success: true, data: { sessionId: 'jw-sid', username: '2021001234', expiresAt: EXPIRES_AT } }))
+    await page.route('**/api/ucloud/logout', (route) => fulfill(route, { success: true }))
+    await page.route('**/api/jwgl/logout', (route) => fulfill(route, { success: true }))
+    await page.route('**/api/ucloud/session', async (route) => {
+      await probeGate
+      fulfill(route, UCLOUD_SESSION)
+    })
+
+    await page.goto(APP_ORIGIN, { waitUntil: 'networkidle' })
+    await page.fill(`${panel} input[type="text"]`, '2021001234')
+    await page.fill(`${panel} input[type="password"]`, 'pw')
+    await page.click(`${panel} button[type="submit"]`)
+    await page.waitForFunction(() => document.querySelectorAll('.panel').length === 0)
+
+    // 派 visibilitychange 触发心跳（间隔条件初始即满足），探活被闸挂起
+    await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
+    await page.waitForTimeout(300)
+
+    await page.click('.topbar-auth button')
+    await page.waitForFunction(() => document.querySelector('.topbar-auth .who')?.textContent === '未登录')
+
+    // 放行迟到的 200 响应：修复前 heartbeat 会把 {...null, ...data} 写回本地
+    releaseProbe()
+    await page.waitForTimeout(400)
+
+    assert.equal(
+      await page.evaluate(() => localStorage.getItem('bupt-week-ucloud-auth')),
+      null,
+      '迟到的探活响应不得把登录态写回',
+    )
+    assert.match(await page.textContent('.topbar-auth'), /未登录/)
+  } finally {
+    releaseProbe()
+    await page.close()
+  }
+})
+
 test('输入不合法时拦住，不发登录请求', async () => {
   const page = await browser.newPage()
   let loginCalls = 0

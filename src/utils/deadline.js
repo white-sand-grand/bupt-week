@@ -6,7 +6,14 @@
 
 /** 无时区时间串（YYYY-MM-DD HH:mm[:ss]）按北京时间（+08:00）解释成时间戳。
  *  日历上不存在的日期（如 2 月 30 日）引擎会宽容回退成 3 月 2 日——
- *  那是「看似合理的错误天数」，显式拒收（对抗性测试抓过）。 */
+ *  那是「看似合理的错误天数」，显式拒收（对抗性测试抓过）。
+ *  形态之外的串也一律 NaN：V8 的宽容解析会按设备本地时区/UTC 解释
+ *  （纯日期按 UTC 午夜、漂移形态按本地钟），静默差 8 小时+——「今天
+ *  截止/已截止」的翻转时刻不能交给设备时区决定。带显式时区标注的串
+ *  没有歧义，原样解析。 */
+const WALL_CLOCK = /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(:\d{2})?$/
+const EXPLICIT_TZ = /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(:\d{2})?(Z|[+-]\d{2}:?\d{2})$/
+
 export function beijingTimestamp(value) {
   if (typeof value !== 'string') return NaN
   const match = value.match(/^(\d{4})-(\d{2})-(\d{2})[ T]/)
@@ -18,10 +25,9 @@ export function beijingTimestamp(value) {
     const probe = new Date(Date.UTC(year, month - 1, day))
     if (probe.getUTCMonth() !== month - 1 || probe.getUTCDate() !== day) return NaN
   }
-  const zoned = /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(?::\d{2})?$/.test(value)
-    ? value.replace(' ', 'T') + '+08:00'
-    : value
-  return Date.parse(zoned)
+  if (WALL_CLOCK.test(value)) return Date.parse(value.replace(' ', 'T') + '+08:00')
+  if (EXPLICIT_TZ.test(value)) return Date.parse(value)
+  return NaN
 }
 
 export function getDaysLeft(deadline, now = Date.now()) {

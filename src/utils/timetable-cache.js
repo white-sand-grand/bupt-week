@@ -9,7 +9,8 @@
 export const TIMETABLE_KEY = 'bupt-week-timetable-v1'
 
 export function validateTimetableCache(value) {
-  return value?.version === 1 && typeof value.username === 'string'
+  // username 非空：与作业缓存同一约定——空串会击穿按账号隔离
+  return value?.version === 1 && typeof value.username === 'string' && value.username !== ''
     && typeof value.savedAt === 'string' && Number.isFinite(Date.parse(value.savedAt))
     && Array.isArray(value.weeks) && value.weeks.length > 0
     && value.weeks.every((week) => week && Number.isInteger(week.week)
