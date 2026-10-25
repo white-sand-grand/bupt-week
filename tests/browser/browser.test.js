@@ -1170,6 +1170,14 @@ test('移动端：今日列自动定位、重挂载后仍在、无横向溢出�
     )
     assert.ok(assignmentOverflow <= 0, `作业页横向溢出 ${assignmentOverflow}px`)
 
+    // 过滤态：头部同时摆着开关和计数徽标，窄屏也不允许溢出
+    await page.click('.filter-toggle')
+    const filterOverflow = await page.evaluate(
+      () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+    )
+    assert.ok(filterOverflow <= 0, `过滤态作业页横向溢出 ${filterOverflow}px`)
+    await page.click('.filter-toggle')
+
     await page.click('.tabs button:nth-child(1)')
     await page.waitForSelector('.grid')
     await page.waitForFunction(() => document.querySelector('.grid-scroll')?.scrollLeft > 0, { timeout: 3000 })
@@ -1224,11 +1232,11 @@ const ASSIGNMENTS_FIXTURE = () => ({
   },
 })
 
-async function loginAndOpenAssignments(page) {
+async function loginAndOpenAssignments(page, assignmentsFixture = ASSIGNMENTS_FIXTURE()) {
   await page.route('**/api/auth/login', (route) => fulfill(route, LOGIN_OK))
   await page.route('**/api/jwgl/session', (route) => fulfill(route, { success: true, data: { sessionId: 'jw-sid', username: '2021001234', expiresAt: EXPIRES_AT } }))
   await page.route('**/api/ucloud/session', (route) => fulfill(route, UCLOUD_SESSION))
-  await page.route('**/api/ucloud/assignments', (route) => fulfill(route, ASSIGNMENTS_FIXTURE()))
+  await page.route('**/api/ucloud/assignments', (route) => fulfill(route, assignmentsFixture))
 
   await page.goto(APP_ORIGIN, { waitUntil: 'networkidle' })
   await page.fill(`${panel} input[type="text"]`, '2021001234')
@@ -1260,6 +1268,54 @@ test('作业：按紧急度排序、按课程分组、状态徽标正确', async
 
     // 顶栏计数：未完成 2（已提交的不算）
     assert.match(await page.textContent('.counter'), /2 项未完成/)
+  } finally {
+    await page.close()
+  }
+})
+
+test('作业：「只看未提交」开关——滤掉已提交，切回全部还原', async () => {
+  const page = await browser.newPage()
+  try {
+    await loginAndOpenAssignments(page)
+    await page.waitForSelector('.card')
+    assert.equal(await page.locator('.card').count(), 3)
+
+    // 打开过滤：已提交的「实验二 树」消失，按钮文案切到「显示全部」
+    await page.click('.filter-toggle')
+    assert.deepEqual(
+      await page.locator('.card-title').allTextContents(),
+      ['lab0 环境配置', '实验一 线性表'],
+    )
+    assert.match(await page.textContent('.filter-toggle'), /显示全部/)
+
+    // 切回全部：三张卡都在，分组标题也回来
+    await page.click('.filter-toggle')
+    assert.equal(await page.locator('.card').count(), 3)
+    assert.equal(await page.locator('.course-group h3').count(), 2)
+    assert.match(await page.textContent('.filter-toggle'), /只看未提交/)
+  } finally {
+    await page.close()
+  }
+})
+
+test('作业：「只看未提交」开着且全交了：给专门空态而不是「没有作业记录」', async () => {
+  const page = await browser.newPage()
+  try {
+    const allSubmitted = ASSIGNMENTS_FIXTURE()
+    allSubmitted.data.assignments = allSubmitted.data.assignments.map((item) => ({
+      ...item,
+      assignmentStatus: 0,
+      submitTime: beijingClockFromNow(-72 * 3600_000),
+    }))
+    await loginAndOpenAssignments(page, allSubmitted)
+    await page.waitForSelector('.card')
+    assert.equal(await page.locator('.card').count(), 3)
+
+    await page.click('.filter-toggle')
+    await page.waitForFunction(() => document.querySelector('.view .empty')?.textContent.includes('没有未提交的作业'))
+    // 空态下按钮还在，能切回去
+    await page.click('.filter-toggle')
+    await page.waitForSelector('.card')
   } finally {
     await page.close()
   }

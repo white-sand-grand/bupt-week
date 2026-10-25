@@ -34,9 +34,38 @@ let revision = 0
 const assignments = computed(() =>
   sortAssignments(raw.value.map((record) => normalizeAssignment(record))).filter(isCurrentTerm))
 
-/** 云邮分组在前，班级分组（手动录入的共享作业）追加在后。 */
-const groups = computed(() => [...groupByCourse(assignments.value), ...classesStore.classGroups.value])
-const unfinishedCount = computed(() => assignments.value.filter((item) => !item.isCompleted && item.level !== 'missed').length)
+/** 未提交判定，与「X 项未完成」计数同口径：!isCompleted 且非往期未交。 */
+function isUnsubmitted(item) {
+  return !item.isCompleted && item.level !== 'missed'
+}
+
+/** 「只看未提交」开关：会话级（切视图重挂载不丢，退出登录重置）。
+ *  作用范围就是本学期列表——往期作业在上游已经滤掉，这里不再重复判。 */
+const unsubmittedOnly = ref(false)
+
+function toggleUnsubmittedOnly() {
+  unsubmittedOnly.value = !unsubmittedOnly.value
+}
+
+/** 云邮分组在前，班级分组（手动录入的共享作业）追加在后。
+ *  「只看未提交」时两侧同口径过滤，被滤空的组整个藏掉。 */
+const groups = computed(() => {
+  const cloud = unsubmittedOnly.value ? assignments.value.filter(isUnsubmitted) : assignments.value
+  const classPart = unsubmittedOnly.value
+    ? classesStore.classGroups.value
+      .map((group) => ({ ...group, items: group.items.filter(isUnsubmitted) }))
+      .filter((group) => group.items.length > 0)
+    : classesStore.classGroups.value
+  return [...groupByCourse(cloud), ...classPart]
+})
+
+const unfinishedCount = computed(() => assignments.value.filter(isUnsubmitted).length)
+
+/** 「只看未提交」开着但列表空了：是全交了而不是本来没数据，提示口径不一样。 */
+const filteredEmpty = computed(() =>
+  unsubmittedOnly.value
+  && groups.value.length === 0
+  && (assignments.value.length > 0 || classesStore.classGroups.value.length > 0))
 
 /** 强制走网络刷新（重试按钮也走这里，所以不看 state 直接拉）。
  *  在途时直接返回：连点重试不允许叠加请求（revision 只保数据正确，防重复靠这里）。 */
@@ -114,6 +143,7 @@ function reset() {
   error.value = ''
   stale.value = false
   savedAt.value = null
+  unsubmittedOnly.value = false
   expanded.value = {}
   attachments.value = {}
   attachmentState.value = {}
@@ -126,6 +156,8 @@ watch(() => auth.ucloudReady.value, (ready) => {
 export const assignmentsStore = {
   groups: readonly(groups),
   unfinishedCount: readonly(unfinishedCount),
+  unsubmittedOnly: readonly(unsubmittedOnly),
+  filteredEmpty: readonly(filteredEmpty),
   state: readonly(state),
   error: readonly(error),
   stale: readonly(stale),
@@ -136,6 +168,7 @@ export const assignmentsStore = {
   load,
   retry: refresh,
   toggle,
+  toggleUnsubmittedOnly,
   retryAttachment: loadAttachments,
   reset,
 }

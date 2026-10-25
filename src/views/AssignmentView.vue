@@ -105,9 +105,20 @@ const groups = computed(() => assignmentsStore.groups.value)
   <section class="pane">
     <header class="pane-head">
       <h2>作业</h2>
-      <span v-if="assignmentsStore.unfinishedCount.value" class="counter">
-        {{ assignmentsStore.unfinishedCount.value }} 项未完成
-      </span>
+      <div class="head-actions">
+        <!-- 过滤开关：文案即按下后的动作（只看未提交 ⇄ 显示全部）。
+             往期作业上游已滤掉，这里只在本学期列表里切。 -->
+        <button
+          v-if="ready"
+          class="filter-toggle"
+          :class="{ 'filter-toggle-on': assignmentsStore.unsubmittedOnly.value }"
+          type="button"
+          @click="assignmentsStore.toggleUnsubmittedOnly()"
+        >{{ assignmentsStore.unsubmittedOnly.value ? '显示全部' : '只看未提交' }}</button>
+        <span v-if="assignmentsStore.unfinishedCount.value" class="counter">
+          {{ assignmentsStore.unfinishedCount.value }} 项未完成
+        </span>
+      </div>
     </header>
 
     <!-- 有缓存数据但刷新失败：数据照常可用，黄条说明来龙去脉（独立于列表渲染链） -->
@@ -131,6 +142,12 @@ const groups = computed(() => assignmentsStore.groups.value)
       <span class="notice-text">作业列表获取失败：{{ assignmentsStore.error.value }}</span>
       <button class="notice-action" type="button" @click="assignmentsStore.retry()">重试</button>
     </div>
+
+    <!-- 「只看未提交」开着但一条不剩：说明全交了，不是没数据，口径要分开说 -->
+    <p v-else-if="assignmentsStore.filteredEmpty.value" class="empty">
+      没有未提交的作业，全部作业都交了。
+      想看已提交的，点右上角「显示全部」。
+    </p>
 
     <p v-else-if="!groups.length" class="empty">本学期没有作业记录。</p>
 
@@ -265,6 +282,44 @@ const groups = computed(() => assignmentsStore.groups.value)
 h2 {
   margin: 0;
   font-size: 1.25rem;
+}
+
+.head-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+/* 过滤开关：开着时用品牌底色标出当前模式（明暗两套主题都取 counter 的配色对） */
+.filter-toggle {
+  min-height: var(--touch);
+  padding: 0 0.875rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  color: var(--ink-soft);
+  font: inherit;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: color 0.15s ease, background 0.15s ease, border-color 0.15s ease;
+}
+
+.filter-toggle-on {
+  color: var(--brand-700);
+  background: var(--brand-050);
+  border-color: var(--brand-100);
+}
+
+@media (prefers-color-scheme: dark) {
+  .filter-toggle {
+    /* 深色下 surface 与页面背景对比弱，给个实底（与顶栏退出按钮同理） */
+    background: var(--surface-sunken);
+  }
+
+  .filter-toggle-on {
+    color: var(--brand-600);
+  }
 }
 
 .counter {
