@@ -75,3 +75,44 @@ test('参数缺失（400）不占限速额度', async (t) => {
   // 15 次 400 之后，真正的密码尝试仍应走到上游（401），不是 429
   assert.equal((await post(app, '/api/auth/login', { username: 'u', password: 'bad' })).status, 401)
 })
+
+// ── 2026-10-25 对抗加固轮 ────────────────────────────────────────────────────
+
+import { createLoginRateLimiter, createRequestRateLimiter } from '../server/rate-limit.js'
+import { ApiError } from '../server/http.js'
+
+function ipContext(ip = '9.9.9.9') {
+  return { req: { header: (name) => (name === 'CF-Connecting-IP' ? ip : undefined) } }
+}
+
+test('对抗：并发失败突刺全额计数，不被读改写竞态免单', async () => {
+  const limiter = createLoginRateLimiter({ maxFailures: 5 })
+  const handler = limiter(async () => {
+    throw new ApiError(401, { stage: 'test', msg: '密码错' })
+  })
+
+  // 20 个并发 401：旧实现里各自拿着 await 前的旧桶引用回写，
+  // 互相覆盖后计数停在 1，突刺全免单；修后必须全额累计
+  await Promise.allSettled(Array.from({ length: 20 }, () => handler(ipContext())))
+
+  await assert.rejects(
+    () => handler(ipContext()),
+    (error) => error.status === 429,
+    '突刺之后的下一个请求必须已被挡',
+  )
+})
+
+test('对抗：请求级限速按命中次数计数（不分成败），超限 429', async () => {
+  const limiter = createRequestRateLimiter({ maxRequests: 3 })
+  const handler = limiter(async () => 'ok')
+
+  for (let i = 0; i < 3; i += 1) {
+    assert.equal(await handler(ipContext()), 'ok')
+  }
+  await assert.rejects(
+    () => handler(ipContext()),
+    (error) => error.status === 429,
+  )
+  // 不同来源互不影响
+  assert.equal(await handler(ipContext('8.8.8.8')), 'ok')
+})

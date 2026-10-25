@@ -137,8 +137,9 @@ Cloudflare Workers 不受影响——它的 `fetch` 不走系统代理，直连�
 三个登录接口（`/api/auth/login`、`/api/ucloud/login`、`/api/jwgl/login`）内置了
 进程内限速：同一来源 IP 10 分钟内密码错 10 次后返回 429。它挡的是单一来源的
 低成本爆破；分布式攻击、以及 Workers 多 isolate 各自计数的问题，应用层挡不住。
-上线后建议在 Cloudflare 控制台给后端域名加一条 **WAF 限速规则**（同 IP 对这三个
-路径限速），作为外层兜底。
+另外 `/api/auth/wecom/start` 是匿名入口但每次命中都写一条 KV（企微回流的
+state 暂存），应用层已按同 IP 10 分钟 30 次限速。上线后建议在 Cloudflare 控制台
+给后端域名加一条 **WAF 限速规则**（同 IP 对这四个路径限速），作为外层兜底。
 
 ## 7. 发布前检查
 

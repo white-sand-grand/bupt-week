@@ -6,6 +6,7 @@ import { fetchTimetableWeixin } from '../services/jwglweixin.js'
 import { getAssignmentDetail, listAssignmentsWithCourses, listCourses } from '../services/assignments.js'
 import { listCoursewareTree } from '../services/courseware.js'
 import { slideSessionExpiry } from './auth.js'
+import { deleteSessionIfUnchanged } from '../session-guard.js'
 
 /**
  * 本站自己的业务接口。
@@ -46,7 +47,10 @@ export function createApiRoutes({ getSessionStore }) {
       try {
         result = await fetchTimetableWeixin({ token: session.token, week })
       } catch (error) {
-        if (error instanceof ApiError && error.status === 401) await store.delete(sessionId)
+        if (error instanceof ApiError && error.status === 401) {
+          // 迟到的 401 不能删掉并发请求刚续期回写的会话（见 session-guard）
+          await deleteSessionIfUnchanged(store, sessionId, session)
+        }
         throw error
       }
       return c.json({ success: true, data: { timetable: result.timetable } })
@@ -56,7 +60,9 @@ export function createApiRoutes({ getSessionStore }) {
     try {
       result = await fetchTimetable({ cookies: session.cookies, week, mode })
     } catch (error) {
-      if (error instanceof ApiError && error.status === 401) await store.delete(sessionId)
+      if (error instanceof ApiError && error.status === 401) {
+        await deleteSessionIfUnchanged(store, sessionId, session)
+      }
       throw error
     }
 

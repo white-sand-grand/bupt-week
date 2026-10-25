@@ -375,3 +375,125 @@ test('POST /api/jwgl/session：jwglweixin 会话探活成功也滑动续期', as
   assert.ok(Math.abs(body.data.expiresAt - (now + 7 * DAY)) < 60_000)
   assert.ok(Math.abs((await store.get('wx')).expiresAt - (now + 7 * DAY)) < 60_000)
 })
+
+// ── 2026-10-25 对抗加固轮 ────────────────────────────────────────────────────
+
+test('对抗：logout 只删自己 kind 的会话键，不能当匿名删任意键的接口', async () => {
+  // 复刻 Node/VPS 部署形态：会话与班级数据共用同一个存储实例
+  const store = new MemorySessionStore()
+  const app = createBackend({ getSessionStore: () => store, getClassStore: () => store, allowedOrigins: [] })
+  const far = Date.now() + 30 * 86400000
+  await store.set('class:abc:assigns', { assignments: [{ id: 'hw' }], expiresAt: far })
+  await store.set('code:ABCD2345', { classId: 'abc', expiresAt: far })
+  await store.set('user:2021001234:classes', { ids: ['abc'], expiresAt: far })
+
+  for (const path of ['/api/ucloud/logout', '/api/jwgl/logout']) {
+    for (const key of ['class:abc:assigns', 'code:ABCD2345', 'user:2021001234:classes']) {
+      const response = await post(app, path, { sessionId: key })
+      assert.equal(response.status, 200, '幂等成功')
+      assert.ok(await store.get(key), `${path} 不能删掉 ${key}`)
+    }
+  }
+
+  // 正常路径不受影响：真会话仍能登出（memory store 删除后 get 返回 undefined）
+  await store.set('sid', { kind: 'ucloud', accessToken: 'tk', expiresAt: far })
+  await post(app, '/api/ucloud/logout', { sessionId: 'sid' })
+  assert.equal(await store.get('sid'), undefined, 'ucloud 会话应被登出')
+})
+
+test('对抗：并发探活时，迟到的续期失败不能删掉兄弟请求刚续活的会话', async (t) => {
+  const { app, store } = makeApp()
+  const now = Date.now()
+  // 剩余 1 天（< 6 天）→ 续期成功方必然回写滑动后的新会话
+  await store.set('sid', {
+    kind: 'ucloud', username: '2021001234', realName: '张三',
+    createdAt: now - 20 * 86400000, expiresAt: now + 86400000,
+    accessToken: 'stale-at', refreshToken: 'stale-rt',
+  })
+
+  let infoCalls = 0
+  let refreshCalls = 0
+  let seenFirstProbe
+  const firstProbe = new Promise((resolve) => { seenFirstProbe = resolve })
+  let releaseProbe
+  const gate = new Promise((resolve) => { releaseProbe = resolve })
+
+  t.mock.method(globalThis, 'fetch', async (url, options = {}) => {
+    const target = String(url)
+    if (target.includes('ykt-basics/info')) {
+      // headers 可能是普通对象（postToken）也可能是 Headers 实例（withUserAgent 包过的 getUserInfo）
+      const headers = options.headers ?? {}
+      const token = headers['Blade-Auth']
+        ?? (typeof headers.get === 'function' ? headers.get('Blade-Auth') : undefined)
+      infoCalls += 1
+      if (token === 'stale-at' && infoCalls === 1) {
+        // 请求 B 的第一次探测：压在闸上，等 A 全程跑完
+        seenFirstProbe()
+        await gate
+        return json({ msg: 'expired' }, 401)
+      }
+      return token === 'fresh-at'
+        ? json({ code: 200, success: true, data: { id: '2021001234', realName: '张三' } })
+        : json({ msg: 'expired' }, 401)
+    }
+    if (target.includes('ykt-basics/oauth/token')) {
+      refreshCalls += 1
+      // refresh token 轮换语义：旧 rt 只能用一次，第二次（B 迟到的刷新）被上游拒绝
+      return refreshCalls === 1
+        ? json({ access_token: 'fresh-at', refresh_token: 'fresh-rt', expires_in: 7199 })
+        : json({ msg: 'refresh token consumed' }, 400)
+    }
+    return json({})
+  })
+
+  // B 先进门（读到旧会话快照），上游探测被闸住
+  const b = post(app, '/api/ucloud/session', { sessionId: 'sid' })
+  await firstProbe
+  // A 后进门（读到的仍是旧快照——B 还没写）：探测旧 token 401 → 刷新成功 → 回写新会话
+  const a = await post(app, '/api/ucloud/session', { sessionId: 'sid' })
+  assert.equal(a.status, 200, 'A 应续期成功')
+  // 放 B：旧 token 401、旧 rt 刷新被拒 → 401，但不得删 A 刚写回的会话
+  releaseProbe()
+  assert.equal((await b).status, 401)
+
+  const stored = await store.get('sid')
+  assert.ok(stored, '并发兄弟的迟到失败不能把刚续期的会话连带删掉')
+  assert.equal(stored.accessToken, 'fresh-at')
+  assert.equal(stored.refreshToken, 'fresh-rt')
+})
+
+test('对抗：畸形 cookie（非法百分号转义）不再让企微回调 500', async () => {
+  const { app } = makeApp()
+  const response = await app.request('/api/auth/wecom/callback?code=x&state=y', {
+    headers: { Cookie: 'bupt-week-wecom-state=%; bupt-week-frontend=%E0%A4%A' },
+  })
+  assert.notEqual(response.status, 500, '畸形 cookie 应走优雅兜底而不是 500')
+  assert.ok(response.status < 500)
+  await response.text()
+})
+
+test('对抗：请求体超过 128KB 直接 413（匿名 logout 不再能打内存尖峰）', async () => {
+  const { app } = makeApp()
+  const response = await app.request('/api/ucloud/logout', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: 'x'.repeat(200 * 1024),
+  })
+  assert.equal(response.status, 413)
+  const body = await response.json()
+  assert.equal(body.stage, 'body-too-large')
+})
+
+test('对抗：wecom/start 匿名入口有请求级限速（KV 写配额不能被脚本耗尽）', async (t) => {
+  const { app } = makeApp()
+  // 上游形状不重要：限速器在 handler 之前计数，第 31 次必须 429
+  t.mock.method(globalThis, 'fetch', async () => new Response(CAS_PAGE, { headers: { 'set-cookie': 'a=1' } }))
+
+  let lastStatus = 0
+  for (let i = 0; i < 31; i += 1) {
+    const response = await app.request('/api/auth/wecom/start')
+    lastStatus = response.status
+    await response.text()
+  }
+  assert.equal(lastStatus, 429, '第 31 次（超出 30/10min）应被限速')
+})

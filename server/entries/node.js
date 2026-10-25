@@ -25,7 +25,17 @@ const app = createBackend({
   frontendUrl: process.env.FRONTEND_URL || '',
 })
 
-serve({ fetch: app.fetch, hostname, port }, () => {
+serve({
+  // Node 形态没有 Cloudflare 覆写，CF-Connecting-IP 是客户端想写就写的头；
+  // 限流若信它，随机伪造一串就次次新桶。剥掉，统一按本机来源计
+  // （默认只绑回环；要暴露部署请走带 WAF/反代的形态，见 docs/deployment.md）。
+  fetch: (request, ...rest) => {
+    request.headers.delete('CF-Connecting-IP')
+    return app.fetch(request, ...rest)
+  },
+  hostname,
+  port,
+}, () => {
   console.log(`[backend] listening on http://${hostname}:${port}`)
   if (allowedOrigins.length === 0) {
     console.log('[backend] 未设置 CORS_ORIGINS，跨域请求会被拒绝（本机同源开发不受影响）')

@@ -4,7 +4,8 @@ import { CAS_CLIENTS, casAuthenticate, casClientRedirect, mergeCookies } from '.
 import { getUserInfo, loginUcloudWithTicket, refreshAccessToken } from '../services/ucloud.js'
 import { loginJwgl, loginJwglWithTicket, validateJwglSession } from '../services/jwgl.js'
 import { loginJwglweixin, validateWeixinSession } from '../services/jwglweixin.js'
-import { createLoginRateLimiter } from '../rate-limit.js'
+import { createLoginRateLimiter, createRequestRateLimiter } from '../rate-limit.js'
+import { deleteSessionIfUnchanged } from '../session-guard.js'
 import { withUserAgent } from '../user-agent.js'
 
 // 服务端会话 7 天；探活/业务成功时滑动续期，30 天绝对上限。
@@ -171,6 +172,7 @@ function reuseCookies(fetchImpl, cookies) {
 export function createAuthRoutes({ getSessionStore, frontendUrl = '', allowedOrigins = [] }) {
   const routes = new Hono()
   const limitLogin = createLoginRateLimiter()
+  const limitWecomStart = createRequestRateLimiter({ maxRequests: 30 })
 
   // ── 统一登录 ──────────────────────────────────────────────────────────────
 
@@ -244,7 +246,9 @@ export function createAuthRoutes({ getSessionStore, frontendUrl = '', allowedOri
 
     const renewed = await renewUcloudSession(session)
     if (!renewed) {
-      await store.delete(sessionId)
+      // 并发探活守卫：refresh token 轮换后，手里的旧快照必然失败；若照删，
+      // 会把并发兄弟请求刚续期回写的新会话连带删掉（强制登出）
+      await deleteSessionIfUnchanged(store, sessionId, session)
       throw new ApiError(401, { stage: 'ucloud-auth', msg: '云邮登录已过期，请重新登录' })
     }
     // token 续期与滑动续期合并成至多一次回写（都是换 expiresAt/凭证后 set）
@@ -264,7 +268,12 @@ export function createAuthRoutes({ getSessionStore, frontendUrl = '', allowedOri
 
   routes.post('/ucloud/logout', async (c) => {
     const { sessionId } = await readJson(c.req.raw)
-    await getSessionStore().delete(sessionId)
+    const store = getSessionStore()
+    // 只删自己的会话键：logout 不带任何身份证明，见键就删等于给所有人一个
+    // 匿名删键接口——Node 入口下班级数据（class:*/code:*/user:*）与会话
+    // 同库，会被整键抹掉。删不存在的键保持幂等成功。
+    const session = typeof sessionId === 'string' ? await store.get(sessionId) : null
+    if (session?.kind === 'ucloud') await store.delete(sessionId)
     return c.json({ success: true })
   })
 
@@ -299,7 +308,7 @@ export function createAuthRoutes({ getSessionStore, frontendUrl = '', allowedOri
       try {
         await validateWeixinSession({ token: session.token })
       } catch (error) {
-        if (error.status === 401) await store.delete(sessionId)
+        if (error.status === 401) await deleteSessionIfUnchanged(store, sessionId, session)
         throw error
       }
       const slid = slideSessionExpiry(session)
@@ -314,7 +323,7 @@ export function createAuthRoutes({ getSessionStore, frontendUrl = '', allowedOri
     try {
       cookies = await validateJwglSession(session.cookies)
     } catch (error) {
-      if (error.status === 401) await store.delete(sessionId)
+      if (error.status === 401) await deleteSessionIfUnchanged(store, sessionId, session)
       throw error
     }
 
@@ -362,7 +371,10 @@ export function createAuthRoutes({ getSessionStore, frontendUrl = '', allowedOri
 
   routes.post('/jwgl/logout', async (c) => {
     const { sessionId } = await readJson(c.req.raw)
-    await getSessionStore().delete(sessionId)
+    const store = getSessionStore()
+    // 同 /ucloud/logout：只删 kind 匹配的教务会话，不给匿名删任意键的口子
+    const session = typeof sessionId === 'string' ? await store.get(sessionId) : null
+    if (session?.kind === 'jwgl' || session?.kind === 'jwglweixin') await store.delete(sessionId)
     return c.json({ success: true })
   })
 
@@ -379,7 +391,10 @@ export function createAuthRoutes({ getSessionStore, frontendUrl = '', allowedOri
    *
    * 用户在微信里会被企业微信自动识别，无需再输学号密码。
    */
-  routes.get('/auth/wecom/start', async (c) => {
+  // 匿名入口但每次命中都写一条 KV + 打一次上游 CAS：按来源限请求次数。
+  // 没有这道闸，约 1 rps 跑 17 分钟就能把 KV 每日免费写配额（1000 次）耗尽，
+  // 之后所有用户的登录（store.set 同步抛错）一起 500。
+  routes.get('/auth/wecom/start', limitWecomStart(async (c) => {
     const { redirectUrl, state, cookies: casCookies } = await casClientRedirect({
       clientName: CAS_CLIENTS.wecom,
       service: UCLOUD_SERVICE,
@@ -426,7 +441,7 @@ export function createAuthRoutes({ getSessionStore, frontendUrl = '', allowedOri
       }
     }
     return response
-  })
+  }))
 
   /**
    * 第二步：接收 app.bupt 回流的 code + CAS state。
@@ -570,7 +585,14 @@ function readCookie(context, name) {
   const raw = context.req.header('Cookie') || ''
   for (const part of raw.split(';')) {
     const [key, ...value] = part.trim().split('=')
-    if (key === name) return decodeURIComponent(value.join('='))
+    if (key === name) {
+      try {
+        return decodeURIComponent(value.join('='))
+      } catch {
+        // 畸形百分号转义：当没这个 cookie 走既有兜底，别让回调 500
+        return ''
+      }
+    }
   }
   return ''
 }

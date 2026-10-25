@@ -154,6 +154,12 @@ export function createClassesRoutes({ getSessionStore, getClassStore }) {
     }
     const record = await loadClass(classStore, index.classId)
 
+    // 长度先于哈希校验：PBKDF2 对超大 key 是全长 HMAC，不设上限等于给
+    // 持会话者一个内存/CPU 消耗入口。口径与 create 一致（4-32 位）。
+    if (typeof password !== 'string' || password.length < 4 || password.length > 32) {
+      throw new ApiError(400, { stage: 'class-input', msg: '班级密码需要 4-32 位' })
+    }
+
     if (!(await verifyPassword(password ?? '', record.salt, record.passHash))) {
       throw new ApiError(401, { stage: 'class-password', msg: '班级密码不对' })
     }

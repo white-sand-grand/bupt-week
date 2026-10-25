@@ -297,3 +297,17 @@ test('dissolve：创建者解散班级——所有键清理、成员索引剪除
   const recreated = await seedClass({ name: '重建的班' })
   assert.ok(recreated.code, '解散后可正常再建班')
 })
+
+test('对抗：join 的班级密码长度与 create 同口径（4-32），超长不再进 PBKDF2', async () => {
+  const { app, sessionStore, seedClass } = makeApp()
+  const { code } = await seedClass()
+  await seedUcloud(sessionStore, 'uc2', '2021999999')
+
+  const tooLong = await post(app, '/api/classes/join', { sessionId: 'uc2', code, password: 'x'.repeat(33) })
+  assert.equal(tooLong.status, 400, '超长密码应在哈希前被拒')
+  const tooShort = await post(app, '/api/classes/join', { sessionId: 'uc2', code, password: 'ab' })
+  assert.equal(tooShort.status, 400)
+
+  const ok = await post(app, '/api/classes/join', { sessionId: 'uc2', code, password: 'class-pw' })
+  assert.equal(ok.status, 200, '正确密码不受影响')
+})

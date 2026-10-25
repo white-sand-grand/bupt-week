@@ -44,10 +44,42 @@ export function createLoginRateLimiter({ windowMs = WINDOW_MS, maxFailures = MAX
       return await handler(c)
     } catch (error) {
       if (error instanceof ApiError && error.status === 401) {
-        if (bucket && bucket.expiresAt > now) bucket.count += 1
-        else failures.set(key, { count: 1, expiresAt: now + windowMs })
+        // 计数必须在 catch 里重读重判：进门的桶引用是 await 之前捕获的，
+        // 并发失败各自拿旧引用回写会互相覆盖——突刺全免单、计数还被重置
+        const nowAfter = Date.now()
+        const current = failures.get(key)
+        if (current && current.expiresAt > nowAfter) current.count += 1
+        else failures.set(key, { count: 1, expiresAt: nowAfter + windowMs })
       }
       throw error
     }
+  }
+}
+
+/**
+ * 请求级限速（不分成败，每次命中都计数）。
+ *
+ * 给无需认证、但每次命中都会写存储或打上游的匿名入口用（如企微 start：
+ * 每次都写一条 KV，脚本耗尽每日写配额后全站登录跟着失败）。
+ */
+export function createRequestRateLimiter({ windowMs = WINDOW_MS, maxRequests = 30 } = {}) {
+  const counts = new Map()
+
+  return (handler) => async (c) => {
+    const key = c.req.header('CF-Connecting-IP') || 'local'
+    const now = Date.now()
+    for (const [k, bucket] of counts) {
+      if (bucket.expiresAt <= now) counts.delete(k)
+    }
+
+    const bucket = counts.get(key)
+    const count = bucket && bucket.expiresAt > now ? bucket.count + 1 : 1
+    if (count > maxRequests) {
+      throw new ApiError(429, { stage: 'rate-limit', msg: '请求太频繁，请稍后再试' })
+    }
+    if (bucket && bucket.expiresAt > now) bucket.count = count
+    else counts.set(key, { count, expiresAt: now + windowMs })
+
+    return handler(c)
   }
 }
