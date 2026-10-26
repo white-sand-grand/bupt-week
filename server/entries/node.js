@@ -11,10 +11,9 @@ const allowedOrigins = String(process.env.CORS_ORIGINS || '')
   .map((origin) => origin.trim())
   .filter(Boolean)
 
-// 会话落到项目目录的 .sessions.local，权限 0600，已被 .gitignore 挡住。
-// 用工厂而不是直接传实例：FileSessionStore 构造时会读文件，推迟到真正有请求时再打开。
+// 会话落到项目目录的 .sessions.local.d/，旧 .sessions.local 首次访问时自动迁移。
 // 班级数据与会话共用这一个实例——键带 class:/user:/code: 前缀不会撞号；
-// 不能建第二个 FileSessionStore 指同一文件，save() 是整文件覆写，会互相清数据。
+// 同一目录只由一个实例写入，保证同键操作的顺序。
 const store = new FileSessionStore()
 
 const app = createBackend({

@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync, statSync } from 'node:fs'
+import { existsSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { setImmediate } from 'node:timers/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { MemorySessionStore } from '../server/storage/memory.js'
@@ -63,10 +64,12 @@ test('FileSessionStore：跨实例恢复，且文件权限为 0600', async () =>
     const first = new FileSessionStore(file)
     await first.set('a', makeSession())
 
-    // 权限位只取低 9 位；umask 可能影响 writeFileSync 的 mode，这里断言实际值。
+    // 权限位只取低 9 位，断言目录与实际记录文件的权限。
     // Windows/NTFS 不套用 POSIX 权限位（永远读到 0666），这条只在 POSIX 上有意义。
     if (process.platform !== 'win32') {
-      assert.equal(statSync(file).mode & 0o777, 0o600)
+      assert.equal(statSync(`${file}.d`).mode & 0o777, 0o700)
+      const [record] = readdirSync(`${file}.d`)
+      assert.equal(statSync(join(`${file}.d`, record)).mode & 0o777, 0o600)
     }
 
     const second = new FileSessionStore(file)
@@ -83,6 +86,100 @@ test('FileSessionStore：不恢复已过期的会话', async () => {
   try {
     await new FileSessionStore(file).set('a', makeSession({ expiresAt: Date.now() - 1 }))
     assert.equal(await new FileSessionStore(file).get('a'), undefined)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('FileSessionStore：更新单个键不再序列化其他记录，写入时让出事件循环', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'bupt-week-'))
+  try {
+    const store = new FileSessionStore(join(dir, '.sessions.local'))
+    let serialized = 0
+    await store.set('large-class', makeSession({
+      content: 'x'.repeat(1024 * 1024),
+      toJSON() {
+        serialized += 1
+        return { content: this.content, expiresAt: this.expiresAt }
+      },
+    }))
+    serialized = 0
+
+    let yielded = false
+    const heartbeat = setImmediate().then(() => { yielded = true })
+    await store.set('session', makeSession())
+    assert.equal(serialized, 0, '无关的班级大记录不应被再次序列化')
+    assert.equal(yielded, true, '磁盘写入不应同步阻塞事件循环')
+    await heartbeat
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('FileSessionStore：旧 JSON 文件迁移后仍可读写删除，重启不复活旧记录', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'bupt-week-'))
+  const file = join(dir, '.sessions.local')
+  try {
+    writeFileSync(file, JSON.stringify({
+      a: makeSession(),
+      'class:test:members': makeSession({ members: ['test-user'] }),
+      expired: makeSession({ expiresAt: Date.now() - 1 }),
+    }))
+    const store = new FileSessionStore(file)
+    assert.equal((await store.get('a')).cookies, 'JSESSIONID=abc')
+    assert.deepEqual((await store.get('class:test:members')).members, ['test-user'])
+    assert.equal(await store.get('expired'), undefined)
+    assert.equal(existsSync(file), false, '全部迁移成功后移除旧快照')
+
+    await store.set('class:test:members', makeSession({ members: ['new-user'] }))
+    assert.equal(await store.delete('a'), true)
+    assert.equal(await store.delete('missing'), false)
+    const restored = new FileSessionStore(file)
+    assert.equal(await restored.get('a'), undefined)
+    assert.deepEqual((await restored.get('class:test:members')).members, ['new-user'])
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('FileSessionStore：并发修改同一键保持调用顺序，失败后仍可写入', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'bupt-week-'))
+  const file = join(dir, '.sessions.local')
+  try {
+    const store = new FileSessionStore(file)
+    await store.set('a', makeSession({ cookies: 'saved' }))
+    const circular = makeSession()
+    circular.self = circular
+    await assert.rejects(() => store.set('a', circular), /circular/i)
+    assert.equal((await new FileSessionStore(file).get('a')).cookies, 'saved')
+    await Promise.all([
+      store.set('a', makeSession({ cookies: 'old' })),
+      store.delete('a'),
+      store.set('a', makeSession({ cookies: 'new' })),
+      store.set('../other:key', makeSession()),
+    ])
+    assert.equal((await new FileSessionStore(file).get('a')).cookies, 'new')
+    assert.equal((await store.get('../other:key')).cookies, 'JSESSIONID=abc')
+    assert.equal(await store.get(undefined), undefined)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('FileSessionStore：中断迁移可续跑，已迁移记录优先于旧快照', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'bupt-week-'))
+  const file = join(dir, '.sessions.local')
+  try {
+    await new FileSessionStore(file).set('a', makeSession({ cookies: 'new' }))
+    // 模拟迁移一部分后进程中断：记录目录与尚未删除的旧快照并存。
+    writeFileSync(file, JSON.stringify({
+      a: makeSession({ cookies: 'old' }),
+      b: makeSession({ cookies: 'remaining' }),
+    }))
+    const restored = new FileSessionStore(file)
+    assert.equal((await restored.get('a')).cookies, 'new')
+    assert.equal((await restored.get('b')).cookies, 'remaining')
+    assert.equal(existsSync(file), false)
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }

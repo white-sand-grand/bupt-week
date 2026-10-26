@@ -6,11 +6,10 @@ dist/
 .vite/
 
 # ── 本地凭证与会话 ────────────────────────────────────────────
-# FileSessionStore 把上游 Cookie / token 写进 .sessions.local，
-# 写的时候先用 .sessions.local.tmp 落盘再 rename。两个都必须挡住，
-# 漏掉 .tmp 等于把会话凭证提交上去。
+# FileSessionStore 的旧快照、临时文件与新记录目录都包含上游 Cookie / token。
 *.local
 *.local.tmp
+*.local.d/
 
 # Cloudflare 的本地密钥与 .env
 .dev.vars
