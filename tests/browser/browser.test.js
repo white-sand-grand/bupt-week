@@ -2017,11 +2017,22 @@ test('班级：可继续加入第二个班、作业按科目分组呈现、创�
   }
 })
 
-test('班级：作业 tab 展开班级作业——去交作业置灰不可点、不再打云邮附件接口', async () => {
+test('班级：确认完成移出未提交列表，刷新保留、按账号隔离且可撤销', async () => {
   const page = await browser.newPage()
   try {
-    await page.route('**/api/auth/login', (route) => fulfill(route, LOGIN_OK))
-    await page.route('**/api/ucloud/session', (route) => fulfill(route, UCLOUD_SESSION))
+    let username = '2021001234'
+    await page.route('**/api/auth/login', (route) => fulfill(route, {
+      ...LOGIN_OK,
+      data: {
+        ...LOGIN_OK.data,
+        ucloud: { ...LOGIN_OK.data.ucloud, username },
+        jwgl: { ...LOGIN_OK.data.jwgl, username },
+      },
+    }))
+    await page.route('**/api/ucloud/session', (route) => fulfill(route, {
+      ...UCLOUD_SESSION,
+      data: { ...UCLOUD_SESSION.data, username },
+    }))
     await page.route('**/api/ucloud/assignments', (route) =>
       fulfill(route, { success: true, data: { assignments: [] } }))
     page.route('**/api/classes/list', (route) =>
@@ -2049,6 +2060,11 @@ test('班级：作业 tab 展开班级作业——去交作业置灰不可点、
         },
       }))
     let detailAsked = false
+    let sharedAssignmentDeleted = false
+    page.route('**/api/classes/assignment/delete', (route) => {
+      sharedAssignmentDeleted = true
+      return fulfill(route, { success: true })
+    })
     page.route('**/api/ucloud/assignment/detail', (route) => {
       detailAsked = true
       return fulfill(route, { success: true, data: { attachments: [] } })
@@ -2062,17 +2078,61 @@ test('班级：作业 tab 展开班级作业——去交作业置灰不可点、
     await page.click('.tabs button:nth-child(2)')
     await page.waitForSelector('.view .card')
 
-    // 展开班级作业卡：按钮置灰（disabled 且无 href），文案改讲班级作业的去处
+    // 班级作业可以确认完成，不再保留灰色的「去交作业」占位。
     await page.click('.view .card-main')
     await page.waitForSelector('.view .go-submit')
-    assert.ok(await page.locator('.view .go-submit').isDisabled(), '班级作业没有云邮提交页，按钮应置灰')
+    assert.ok(await page.locator('.view .go-submit').isEnabled())
+    assert.equal(await page.textContent('.view .go-submit'), '确认完成')
     assert.equal(await page.getAttribute('.view .go-submit', 'href'), null, '不应带跳转地址')
-    const hint = await page.textContent('.view .go-submit ~ .detail-hint')
-    assert.match(hint, /不在云邮系统/)
+    assert.match(await page.textContent('.view .counter'), /1 项未完成/)
 
     // 附件区空手落定显示「没有附件」，而不是拿 UUID 去打云邮详情接口吃假报错
     await page.waitForFunction(() => document.querySelector('.view .detail-hint')?.textContent.includes('没有附件'))
     assert.equal(detailAsked, false, '班级作业不该请求云邮附件详情')
+
+    await page.click('.view .go-submit')
+    await page.waitForFunction(() => document.querySelector('.view .empty')?.textContent.includes('没有未提交的作业'))
+    assert.equal(await page.locator('.view .card').count(), 0)
+    assert.equal(await page.locator('.view .counter').count(), 0)
+
+    // 完成的卡片仍保留在全量列表，状态与倒计时同步更新。
+    await page.click('.filter-toggle')
+    await page.waitForSelector('.view .card-done')
+    assert.equal(await page.textContent('.view .badge'), '已完成')
+    assert.equal(await page.locator('.view .countdown, .view .deadline-track').count(), 0)
+    assert.equal(await page.textContent('.view .go-submit'), '标为未完成')
+
+    await page.reload({ waitUntil: 'networkidle' })
+    await page.click('.tabs button:nth-child(2)')
+    await page.waitForFunction(() => document.querySelector('.view .empty')?.textContent.includes('没有未提交的作业'))
+
+    // 同一浏览器换号不能继承本人的完成标记，换回来仍保留。
+    for (const account of ['2021567890', '2021001234']) {
+      await page.click('.topbar-auth button:has-text("退出")')
+      await page.waitForSelector(panel)
+      username = account
+      await page.fill(`${panel} input[type="text"]`, username)
+      await page.fill(`${panel} input[type="password"]`, 'pw')
+      await page.click(`${panel} button[type="submit"]`)
+      await page.waitForFunction(() => document.querySelectorAll('.panel').length === 0)
+      if (account === '2021567890') {
+        await page.waitForSelector('.view .card')
+        assert.equal(await page.locator('.view .card-done').count(), 0)
+      } else {
+        await page.waitForFunction(() => document.querySelector('.view .empty')?.textContent.includes('没有未提交的作业'))
+      }
+    }
+
+    await page.click('.filter-toggle')
+    await page.waitForSelector('.view .card-done')
+    await page.click('.view .card-main')
+    await page.click('.view .go-submit:has-text("标为未完成")')
+    await page.click('.filter-toggle')
+    await page.waitForSelector('.view .card')
+    assert.equal(await page.locator('.view .card-done').count(), 0)
+    assert.match(await page.textContent('.view .counter'), /1 项未完成/)
+    assert.equal(await page.textContent('.view .go-submit'), '确认完成')
+    assert.equal(sharedAssignmentDeleted, false, '确认完成不能删除全班共享的作业')
   } finally {
     await page.close()
   }

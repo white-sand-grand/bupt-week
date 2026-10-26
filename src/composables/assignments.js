@@ -26,6 +26,21 @@ const savedAt = ref(null)
 const expanded = ref({})
 const attachments = ref({})
 const attachmentState = ref({})
+const completedClassAssignments = ref(new Set())
+
+const classCompletionKey = (username) => `bupt-week-class-completed-v1:${encodeURIComponent(username)}`
+const classAssignmentKey = (assignment) => JSON.stringify([assignment.courseId, assignment.id])
+
+// 完成状态属于本人，在当前浏览器按账号保存；换号时重新读取，避免互相串状态。
+watch(() => auth.username.value, (username) => {
+  let saved = []
+  try {
+    if (username) saved = JSON.parse(localStorage.getItem(classCompletionKey(username)) || '[]')
+  } catch {
+    // 本地记录损坏或存储不可用时，按未完成展示。
+  }
+  completedClassAssignments.value = new Set(Array.isArray(saved) ? saved.filter((key) => typeof key === 'string') : [])
+}, { immediate: true, flush: 'sync' })
 
 let revision = 0
 
@@ -49,19 +64,42 @@ function toggleUnsubmittedOnly() {
   unsubmittedOnly.value = !unsubmittedOnly.value
 }
 
+const classGroups = computed(() => classesStore.classGroups.value.map((group) => ({
+  ...group,
+  items: sortAssignments(group.items.map((item) => completedClassAssignments.value.has(classAssignmentKey(item))
+    ? { ...item, isCompleted: true, level: 'submitted', status: '已完成' }
+    : item)),
+})))
+
+function toggleClassCompleted(assignment) {
+  const username = auth.username.value
+  if (!username || !isClassAssignmentId(assignment.id)) return
+  const key = classAssignmentKey(assignment)
+  const next = new Set(completedClassAssignments.value)
+  if (next.has(key)) next.delete(key)
+  else next.add(key)
+  completedClassAssignments.value = next
+  try {
+    localStorage.setItem(classCompletionKey(username), JSON.stringify([...next]))
+  } catch {
+    // 存储不可用时，当前页面内的完成标记仍然生效。
+  }
+}
+
 /** 云邮分组在前，班级分组（手动录入的共享作业）追加在后。
  *  「只看未提交」时两侧同口径过滤，被滤空的组整个藏掉。 */
 const groups = computed(() => {
   const cloud = unsubmittedOnly.value ? assignments.value.filter(isUnsubmitted) : assignments.value
   const classPart = unsubmittedOnly.value
-    ? classesStore.classGroups.value
+    ? classGroups.value
       .map((group) => ({ ...group, items: group.items.filter(isUnsubmitted) }))
       .filter((group) => group.items.length > 0)
-    : classesStore.classGroups.value
+    : classGroups.value
   return [...groupByCourse(cloud), ...classPart]
 })
 
-const unfinishedCount = computed(() => assignments.value.filter(isUnsubmitted).length)
+const unfinishedCount = computed(() => assignments.value.filter(isUnsubmitted).length
+  + classGroups.value.reduce((count, group) => count + group.items.filter(isUnsubmitted).length, 0))
 
 /** 「只看未提交」开着但列表空了：是全交了而不是本来没数据，提示口径不一样。 */
 const filteredEmpty = computed(() =>
@@ -184,6 +222,7 @@ export const assignmentsStore = {
   retry: refresh,
   toggle,
   toggleUnsubmittedOnly,
+  toggleClassCompleted,
   retryAttachment: loadAttachments,
   reset,
 }

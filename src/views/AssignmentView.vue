@@ -143,10 +143,10 @@ const groups = computed(() => assignmentsStore.groups.value)
       <button class="notice-action" type="button" @click="assignmentsStore.retry()">重试</button>
     </div>
 
-    <!-- 「只看未提交」开着但一条不剩：说明全交了，不是没数据，口径要分开说 -->
+    <!-- 过滤后为空：所有作业已提交或确认完成，与没有作业记录分开提示。 -->
     <p v-else-if="assignmentsStore.filteredEmpty.value" class="empty">
-      没有未提交的作业，全部作业都交了。
-      想看已提交的，点右上角「显示全部」。
+      没有未提交的作业，当前作业都已提交或确认完成。
+      想看完整列表，点右上角「显示全部」。
     </p>
 
     <p v-else-if="!groups.length" class="empty">本学期没有作业记录。</p>
@@ -244,7 +244,7 @@ const groups = computed(() => assignmentsStore.groups.value)
             <!-- 云邮作业：新标签打开云邮提交页。浏览器已有云邮会话则直达；没有会话会被
                  弹到统一身份认证，而学校的 CAS 桌面登录页对现代浏览器服务端故障（白屏，
                  见 utils/assignment-url.js 注释）——微信内不受影响（企微自动识别）。
-                 班级录入的作业不在云邮系统里，按钮置灰不给跳转。 -->
+                 班级作业由本人确认完成，从未提交列表移除。 -->
             <a
               v-if="!isClassAssignment(assignment)"
               class="go-submit"
@@ -252,9 +252,14 @@ const groups = computed(() => assignmentsStore.groups.value)
               target="_blank"
               rel="noopener"
             >去交作业</a>
-            <button v-else class="go-submit" type="button" disabled>去交作业</button>
+            <button
+              v-else
+              class="go-submit"
+              type="button"
+              @click="assignmentsStore.toggleClassCompleted(assignment)"
+            >{{ assignment.isCompleted ? '标为未完成' : '确认完成' }}</button>
             <p v-if="isClassAssignment(assignment)" class="detail-hint">
-              班级录入的作业不在云邮系统里，没有在线提交入口；提交方式写在作业内容里。
+              按作业要求完成后点「确认完成」，即可从未提交列表移除；在「显示全部」中可改回未完成。
             </p>
             <p v-else class="detail-hint">
               在云邮页面提交。已登录过云邮会直达这份作业；若打开后是空白页，
@@ -685,15 +690,6 @@ h3 {
 
 .go-submit:active {
   filter: brightness(0.96);
-}
-
-/* 班级录入的作业没有云邮提交页：置灰占位，别让同学去点一个不存在的跳转 */
-.go-submit:disabled {
-  border-color: var(--line);
-  color: var(--muted);
-  background: var(--surface-sunken);
-  box-shadow: none;
-  cursor: not-allowed;
 }
 
 .note {
