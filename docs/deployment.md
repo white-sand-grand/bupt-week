@@ -183,6 +183,10 @@ Node 按键异步落盘，写入成功后接口才返回；同一目录只运行
 state 暂存），应用层已按同 IP 10 分钟 30 次限速。上线后建议在 Cloudflare 控制台
 给后端域名加一条 **WAF 限速规则**（同 IP 对这四个路径限速），作为外层兜底。
 
+Node 以 TCP 连接的来源地址分桶，忽略客户端提供的 `CF-Connecting-IP`、
+`X-Forwarded-For` 和 `X-Real-IP`。如果前面有 Vite 或反向代理，应用看到的是代理
+地址；公网部署应在代理层按真实客户端 IP 限速。Workers 使用 Cloudflare 覆写的来源头。
+
 ## 7. 发布前检查
 
 - [ ] `npm test` 全绿

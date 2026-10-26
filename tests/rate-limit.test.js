@@ -1,5 +1,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { once } from 'node:events'
+import { request } from 'node:http'
+import { serve } from '@hono/node-server'
 import { createBackend } from '../server/app.js'
 import { MemorySessionStore } from '../server/storage/memory.js'
 
@@ -115,4 +118,61 @@ test('对抗：请求级限速按命中次数计数（不分成败），超限 4
   )
   // 不同来源互不影响
   assert.equal(await handler(ipContext('8.8.8.8')), 'ok')
+})
+
+test('Node：登录按真实连接地址隔离，伪造代理头不能换桶', async (t) => {
+  casAlwaysRejects(t)
+  const { app } = makeApp()
+  const server = serve({
+    fetch: (request, ...rest) => {
+      request.headers.delete('CF-Connecting-IP')
+      return app.fetch(request, ...rest)
+    },
+    hostname: '127.0.0.1',
+    port: 0,
+  })
+  t.after(() => new Promise((resolve) => server.close(resolve)))
+  await once(server, 'listening')
+
+  function attempt(localAddress, spoofedIp) {
+    return new Promise((resolve, reject) => {
+      const req = request({
+        hostname: '127.0.0.1',
+        port: server.address().port,
+        localAddress,
+        method: 'POST',
+        path: '/api/auth/login',
+        headers: {
+          'Content-Type': 'application/json',
+          'CF-Connecting-IP': spoofedIp,
+          'X-Forwarded-For': spoofedIp,
+          'X-Real-IP': spoofedIp,
+        },
+      }, (response) => {
+        response.resume()
+        response.on('end', () => resolve(response.statusCode))
+      })
+      req.on('error', reject)
+      req.end(JSON.stringify({ username: 'u', password: 'bad' }))
+    })
+  }
+
+  for (let i = 0; i < 10; i += 1) {
+    assert.equal(await attempt('127.0.0.1', '198.51.100.1'), 401)
+  }
+  assert.equal(await attempt('127.0.0.2', '198.51.100.1'), 401, '其他地址不应被连带封禁')
+  assert.equal(await attempt('127.0.0.1', '198.51.100.2'), 429, '改头不能绕过连接地址限速')
+})
+
+test('Node：请求级限速也使用真实连接地址，Workers 继续按 CF 来源头分桶', async () => {
+  const handler = createRequestRateLimiter({ maxRequests: 1 })(async () => 'ok')
+  const nodeContext = (address, header) => ({
+    ...ipContext(header),
+    env: { incoming: { socket: { remoteAddress: address } } },
+  })
+  assert.equal(await handler(nodeContext('192.0.2.1', undefined)), 'ok')
+  await assert.rejects(() => handler(nodeContext('192.0.2.1', '198.51.100.2')), { status: 429 })
+  assert.equal(await handler(nodeContext('192.0.2.2', undefined)), 'ok')
+  assert.equal(await handler(ipContext('203.0.113.1')), 'ok')
+  assert.equal(await handler(ipContext('203.0.113.2')), 'ok')
 })

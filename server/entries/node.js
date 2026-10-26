@@ -26,8 +26,8 @@ const app = createBackend({
 
 serve({
   // Node 形态没有 Cloudflare 覆写，CF-Connecting-IP 是客户端想写就写的头；
-  // 限流若信它，随机伪造一串就次次新桶。剥掉，统一按本机来源计
-  // （默认只绑回环；要暴露部署请走带 WAF/反代的形态，见 docs/deployment.md）。
+  // 限流若信它，随机伪造一串就次次新桶。剥掉，限流改读适配器 env 中的
+  // incoming.socket.remoteAddress；直接部署按连接来源隔离。
   fetch: (request, ...rest) => {
     request.headers.delete('CF-Connecting-IP')
     return app.fetch(request, ...rest)

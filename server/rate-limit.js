@@ -3,6 +3,12 @@ import { ApiError } from './http.js'
 const WINDOW_MS = 10 * 60_000
 const MAX_FAILURES = 10
 
+function sourceIp(c) {
+  // Node 用适配器提供的连接地址；Workers 用 Cloudflare 覆写的来源头。
+  // 转发头在 Node 可由客户端伪造，不能用于覆盖真实连接地址。
+  return c.env?.incoming?.socket?.remoteAddress || c.req.header('CF-Connecting-IP') || 'local'
+}
+
 /**
  * 登录失败限速（进程内固定窗口计数，按来源 IP）。
  *
@@ -30,8 +36,7 @@ export function createLoginRateLimiter({ windowMs = WINDOW_MS, maxFailures = MAX
   }
 
   return (handler) => async (c) => {
-    // Workers 上该头由 Cloudflare 覆写、不可伪造；本机入口只有回环流量。
-    const key = c.req.header('CF-Connecting-IP') || 'local'
+    const key = sourceIp(c)
     const now = Date.now()
     prune(now)
 
@@ -66,7 +71,7 @@ export function createRequestRateLimiter({ windowMs = WINDOW_MS, maxRequests = 3
   const counts = new Map()
 
   return (handler) => async (c) => {
-    const key = c.req.header('CF-Connecting-IP') || 'local'
+    const key = sourceIp(c)
     const now = Date.now()
     for (const [k, bucket] of counts) {
       if (bucket.expiresAt <= now) counts.delete(k)
