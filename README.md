@@ -147,10 +147,10 @@
 
 前端 localStorage（在用户浏览器，不上传）
 
-bupt-week-ucloud-auth / bupt-week-jwgl-auth   sessionId + 学号 + 姓名 + 过期时间
-bupt-week-timetable-v1                        按周课表缓存（按 username+mode 隔离）
-bupt-week-assignments-v1                      作业列表缓存（按 username 隔离）
-bupt-week-class-completed-v1:{username}       班级作业「确认完成」标记
+    bupt-week-ucloud-auth / bupt-week-jwgl-auth   sessionId + 学号 + 姓名 + 过期时间
+    bupt-week-timetable-v1                        按周课表缓存（按 username+mode 隔离）
+    bupt-week-assignments-v1                      作业列表缓存（按 username 隔离）
+    bupt-week-class-completed-v1:{username}       班级作业「确认完成」标记
 
 ## 许可证
 
