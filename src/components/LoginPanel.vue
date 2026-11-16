@@ -80,23 +80,12 @@ async function submit() {
 
 <style scoped>
 .panel {
-  margin: 1rem 1rem 0;
-  padding: 1.25rem;
+  margin: 1.5rem var(--gutter) 0;
+  padding: 1.5rem;
   border: 1px solid var(--line);
   border-radius: var(--radius-lg);
   background: var(--surface);
-  box-shadow: var(--shadow-sm);
   overflow: hidden;
-  position: relative;
-}
-
-/* 顶部一条品牌色细带，给面板一个视觉锚点 */
-.panel::before {
-  content: '';
-  position: absolute;
-  inset: 0 0 auto 0;
-  height: 3px;
-  background: linear-gradient(90deg, var(--brand-600), var(--brand-500));
 }
 
 .panel-head {
@@ -140,7 +129,7 @@ h2 {
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
-  margin-top: 0.875rem;
+  margin-top: 1.25rem;
 }
 
 .who {
@@ -186,12 +175,6 @@ h2 {
   box-shadow: 0 0 0 3px var(--brand-050);
 }
 
-@media (prefers-color-scheme: dark) {
-  .login-form input:focus {
-    box-shadow: 0 0 0 3px var(--brand-100);
-  }
-}
-
 .login-form input:disabled {
   background: var(--surface-sunken);
 }
@@ -235,9 +218,8 @@ button:disabled {
 }
 
 .button-primary {
-  color: #fff;
-  background: linear-gradient(180deg, var(--brand-600), var(--brand-700));
-  box-shadow: var(--shadow-sm);
+  color: var(--button-ink);
+  background: var(--button-bg);
   font-weight: 500;
 }
 
@@ -255,8 +237,14 @@ button:disabled {
 }
 
 @media (min-width: 48rem) {
-  .panel {
-    margin: 1.25rem 1.25rem 0;
+  .login-form {
+    grid-template-columns: 1fr 1fr auto;
+    align-items: end;
+    gap: 1rem;
+  }
+
+  .login-form button {
+    min-width: 6rem;
   }
 }
 </style>

@@ -165,12 +165,6 @@ h2 {
   border: 1px solid var(--brand-100);
 }
 
-@media (prefers-color-scheme: dark) {
-  .counter {
-    color: var(--brand-600);
-  }
-}
-
 /* 课程 chips：一行放不下就横向滚动（手机上课程多）。 */
 .course-chips {
   display: flex;
@@ -195,9 +189,9 @@ h2 {
 }
 
 .chip-active {
-  color: #fff;
-  background: var(--brand-600);
-  border-color: var(--brand-600);
+  color: var(--button-ink);
+  background: var(--button-bg);
+  border-color: var(--button-bg);
 }
 
 .notice-error {
@@ -343,12 +337,6 @@ h2 {
   border-radius: inherit;
   background: var(--brand-500);
   transition: width 0.3s ease;
-}
-
-@media (prefers-color-scheme: dark) {
-  .link-button {
-    color: var(--brand-500);
-  }
 }
 
 .note {

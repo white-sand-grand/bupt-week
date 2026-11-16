@@ -6,6 +6,7 @@ import { downloadsStore } from '../composables/downloads.js'
 import { buildAssignmentUrl } from '../utils/assignment-url.js'
 import { deadlineProgress, formatCountdown } from '../utils/deadline.js'
 import { formatUpdatedAt, beijingDateString } from '../utils/format.js'
+import AssignmentRequirements from '../components/AssignmentRequirements.vue'
 
 const props = defineProps({
   /** 云邮登录态是否就绪。 */
@@ -99,6 +100,24 @@ watch(() => props.ready, startLoad)
 onUnmounted(() => clearInterval(progressClock))
 
 const groups = computed(() => assignmentsStore.groups.value)
+
+// 统计当前可见的待处理作业；今天/明天与一周内截止合并为「临近截止」。
+const statusSummary = computed(() => {
+  const statuses = [
+    { level: 'overdue', label: '已逾期', count: 0 },
+    { level: 'warning', label: '临近截止', count: 0 },
+    { level: 'normal', label: '待完成', count: 0 },
+  ]
+  for (const group of groups.value) {
+    for (const item of group.items) {
+      if (item.isCompleted) continue
+      const level = item.level === 'danger' ? 'warning' : item.level
+      const status = statuses.find((status) => status.level === level)
+      if (status) status.count += 1
+    }
+  }
+  return statuses.filter((status) => status.count > 0)
+})
 </script>
 
 <template>
@@ -115,9 +134,11 @@ const groups = computed(() => assignmentsStore.groups.value)
           type="button"
           @click="assignmentsStore.toggleUnsubmittedOnly()"
         >{{ assignmentsStore.unsubmittedOnly.value ? '显示全部' : '只看未提交' }}</button>
-        <span v-if="assignmentsStore.unfinishedCount.value" class="counter">
-          {{ assignmentsStore.unfinishedCount.value }} 项未完成
-        </span>
+        <div v-if="ready && statusSummary.length" class="status-summary" role="group" aria-label="作业状态统计">
+          <span v-for="status in statusSummary" :key="status.level" class="status-tag" :class="LEVEL_CLASS[status.level]">
+            {{ status.label }} {{ status.count }}
+          </span>
+        </div>
       </div>
     </header>
 
@@ -197,23 +218,29 @@ const groups = computed(() => assignmentsStore.groups.value)
           </button>
 
           <div v-if="assignmentsStore.expanded.value[assignment.id]" class="card-detail">
-            <template v-if="assignmentsStore.attachmentState.value[assignment.id] === 'loading'">
-              <p class="detail-hint">正在加载附件…</p>
+            <template v-if="assignmentsStore.detailState.value[assignment.id] === 'loading'">
+              <p class="detail-hint" role="status">正在加载作业要求和附件…</p>
             </template>
-            <template v-else-if="assignmentsStore.attachmentState.value[assignment.id] === 'error'">
-              <p class="detail-hint">附件加载失败，可能是网络不稳定。</p>
+            <template v-else-if="assignmentsStore.detailState.value[assignment.id] === 'error'">
+              <p class="detail-hint" role="alert">作业要求和附件加载失败，可能是网络不稳定。</p>
               <button
                 class="notice-action notice-action-inline"
                 type="button"
-                @click="assignmentsStore.retryAttachment(assignment.id)"
-              >重试加载附件</button>
+                @click="assignmentsStore.retryDetail(assignment.id)"
+              >重试加载详情</button>
             </template>
             <template v-else>
-              <p v-if="!assignmentsStore.attachments.value[assignment.id]?.length" class="detail-hint">
+              <AssignmentRequirements
+                v-if="!isClassAssignment(assignment) || assignment.content"
+                :content="isClassAssignment(assignment) ? assignment.content : assignmentsStore.details.value[assignment.id]?.content"
+                :description="assignmentsStore.details.value[assignment.id]?.description"
+                :plain="isClassAssignment(assignment)"
+              />
+              <p v-if="!assignmentsStore.details.value[assignment.id]?.attachments?.length" class="detail-hint">
                 这份作业没有附件。
               </p>
               <ul v-else class="attachment-list">
-                <li v-for="attachment in assignmentsStore.attachments.value[assignment.id]" :key="attachment.resourceId">
+                <li v-for="attachment in assignmentsStore.details.value[assignment.id].attachments" :key="attachment.resourceId">
                   <!-- 下载中禁用：同一附件不允许叠两份下载（防连点在 store 里，这里只是可见的收口） -->
                   <button
                     class="link-button"
@@ -284,7 +311,8 @@ const groups = computed(() => assignmentsStore.groups.value)
 }
 
 .pane-head {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
   justify-content: space-between;
   gap: 0.75rem;
@@ -297,11 +325,14 @@ h2 {
 
 .head-actions {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
+  justify-content: flex-end;
+  min-width: 0;
   gap: 0.5rem;
 }
 
-/* 过滤开关：开着时用品牌底色标出当前模式（明暗两套主题都取 counter 的配色对） */
+/* 过滤开关用品牌色，右侧标签用各状态自身的语义色。 */
 .filter-toggle {
   min-height: var(--touch);
   padding: 0 0.875rem;
@@ -322,31 +353,20 @@ h2 {
   border-color: var(--brand-100);
 }
 
-@media (prefers-color-scheme: dark) {
-  .filter-toggle {
-    /* 深色下 surface 与页面背景对比弱，给个实底（与顶栏退出按钮同理） */
-    background: var(--surface-sunken);
-  }
-
-  .filter-toggle-on {
-    color: var(--brand-600);
-  }
+.status-summary {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.375rem;
 }
 
-.counter {
-  padding: 0.25rem 0.75rem;
+.status-tag {
+  padding: 0.25rem 0.625rem;
+  border: 1px solid transparent;
   border-radius: var(--radius-pill);
-  font-size: 0.8125rem;
-  font-weight: 500;
-  color: var(--brand-700);
-  background: var(--brand-050);
-  border: 1px solid var(--brand-100);
-}
-
-@media (prefers-color-scheme: dark) {
-  .counter {
-    color: var(--brand-600);
-  }
+  font-size: 0.75rem;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 
 /* 状态提示与课表视图同一套语言：红=彻底失败（带重试），黄=有数据但刷新失败 */
@@ -372,7 +392,7 @@ h2 {
   gap: 0.375rem;
   color: var(--warn);
   background: var(--warn-bg);
-  border: 1px solid #fde68a;
+  border: 1px solid var(--warn-line);
   font-size: 0.8125rem;
 }
 
@@ -400,16 +420,6 @@ h2 {
   border-color: var(--brand-500);
 }
 
-@media (prefers-color-scheme: dark) {
-  .notice-warn {
-    border-color: #55461a;
-  }
-
-  .notice-action-inline {
-    color: var(--brand-500);
-  }
-}
-
 .empty {
   margin: 0;
   padding: 2rem 1rem;
@@ -424,12 +434,13 @@ h2 {
 
 .course-group {
   display: grid;
-  gap: 0.5rem;
+  gap: 0.625rem;
 }
 
 h3 {
-  margin: 0.5rem 0 0;
-  font-size: 0.9375rem;
+  margin: 0.875rem 0 0.125rem;
+  font-size: 0.875rem;
+  font-weight: 500;
   color: var(--ink);
 }
 
@@ -461,13 +472,11 @@ h3 {
 }
 
 .card-danger {
-  background: rgba(234, 88, 12, 0.04);
-  background: color-mix(in srgb, #ea580c 4%, var(--surface));
+  background: var(--surface);
 }
 
 .card-open {
   border-color: var(--brand-500);
-  box-shadow: var(--shadow-md);
 }
 
 .card-done {
@@ -480,15 +489,15 @@ h3 {
   top: 0;
   bottom: 0;
   left: 0;
-  width: 4px;
+  width: 2px;
 }
 
-.bar-overdue { background: #dc2626; }
-.bar-danger { background: #ea580c; }
-.bar-warning { background: #ca8a04; }
+.bar-overdue { background: var(--error); }
+.bar-danger { background: var(--danger); }
+.bar-warning { background: var(--warn); }
 .bar-normal { background: var(--brand-500); }
-.bar-submitted { background: #16a34a; }
-.bar-missed { background: #94a3b8; }
+.bar-submitted { background: var(--ok); }
+.bar-missed { background: var(--muted); }
 
 /* 截止进度条：细长（4px）一条，铺在时间行下方，颜色复用上面的 level 色条。
    track 用暗一档的底色兜住未填充部分，暗色主题下也够对比。 */
@@ -519,7 +528,7 @@ h3 {
   gap: 0.25rem;
   width: 100%;
   min-height: var(--touch);
-  padding: 0.625rem 0.875rem 0.625rem 1rem;
+  padding: 0.875rem 1rem;
   border: none;
   background: none;
   text-align: left;
@@ -566,12 +575,6 @@ h3 {
   vertical-align: 1px;
 }
 
-@media (prefers-color-scheme: dark) {
-  .class-source {
-    color: var(--brand-600);
-  }
-}
-
 .card-meta {
   display: flex;
   align-items: center;
@@ -586,8 +589,8 @@ h3 {
   white-space: nowrap;
 }
 
-.badge-overdue { color: #b91c1c; background: var(--error-bg); border: 1px solid var(--error-line); }
-.badge-danger { color: #ea580c; background: var(--danger-bg); }
+.badge-overdue { color: var(--error); background: var(--error-bg); border: 1px solid var(--error-line); }
+.badge-danger { color: var(--danger); background: var(--danger-bg); }
 .badge-warning { color: var(--warn); background: var(--warn-bg); }
 .badge-normal { color: var(--muted); background: var(--surface-sunken); }
 .badge-submitted { color: var(--ok); background: var(--ok-bg); border: 1px solid var(--ok-line); }
@@ -605,7 +608,7 @@ h3 {
 }
 
 .card-detail {
-  padding: 0.25rem 0.875rem 0.75rem 1rem;
+  padding: 0 1rem 1rem;
   display: grid;
   gap: 0.5rem;
   animation: slide-in 0.18s ease;
@@ -664,12 +667,6 @@ h3 {
   padding-left: 1.4rem;
 }
 
-@media (prefers-color-scheme: dark) {
-  .link-button {
-    color: var(--brand-500);
-  }
-}
-
 .go-submit {
   justify-self: start;
   display: inline-flex;
@@ -678,9 +675,8 @@ h3 {
   padding: 0.5rem 1.25rem;
   border: 1px solid transparent;
   border-radius: var(--radius-sm);
-  color: #fff;
-  background: linear-gradient(180deg, var(--brand-600), var(--brand-700));
-  box-shadow: var(--shadow-sm);
+  color: var(--button-ink);
+  background: var(--button-bg);
   font: inherit;
   font-weight: 500;
   cursor: pointer;

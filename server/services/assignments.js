@@ -140,7 +140,8 @@ export async function listAssignmentsWithCourses({ token, userId, fetchImpl = fe
 }
 
 /**
- * 单个作业详情：附件元数据在 data.assignmentResource
+ * 单个作业详情：正文在 assignmentContent，说明字段沿用 MYUCLOUD 的回退顺序。
+ * 附件元数据在 data.assignmentResource
  * （resourceId / resourceName / resourceType，无下载链接——下载走 preview-url）。
  */
 export async function getAssignmentDetail({ token, assignmentId, fetchImpl = fetch }) {
@@ -159,7 +160,11 @@ export async function getAssignmentDetail({ token, assignmentId, fetchImpl = fet
   )
 
   const data = body?.data || {}
+  const text = (value) => typeof value === 'string' ? value
+    : value && typeof value === 'object' ? JSON.stringify(value, null, 2) : ''
   return {
+    content: text(data.assignmentContent),
+    description: text(data.assignmentDescription || data.description || data.content),
     attachments: Array.isArray(data.assignmentResource)
       ? data.assignmentResource.map((item) => ({
         resourceId: String(item.resourceId ?? ''),

@@ -20,18 +20,31 @@ const warn = (name, detail) => {
 
 /** Windows 上 npm 是 .cmd shim 且 Node 24 不允许直接 spawn，须过 shell；
  *  参数都是本脚本写死的固定串，没有注入面。CI（linux）同样兼容。 */
-const npmRun = (args) => execFileSync('npm', args, {
-  shell: true,
-  encoding: 'utf8',
-  stdio: ['ignore', 'pipe', 'ignore'],
-})
+function npmAudit(args) {
+  let raw
+  try {
+    raw = execFileSync('npm', ['audit', ...args, '--json'], {
+      shell: true,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    })
+  } catch (error) {
+    // npm 发现任意级别漏洞都可能退出 1；仍需解析报告，按本项目的严重度规则判定。
+    if (error.status !== 1) throw error
+    raw = error.stdout
+  }
+  const report = JSON.parse(raw)
+  if (report.error || !report.vulnerabilities) {
+    throw new Error('npm audit 未返回有效审计报告，请检查网络或 npm 审计服务')
+  }
+  return report
+}
 
 // ── 1. 依赖审计 ──────────────────────────────────────────────────────────────
 
 function auditGate() {
   console.log('\n[1/3] 依赖审计（npm audit）')
-  const raw = npmRun(['audit', '--omit=dev', '--json'])
-  const report = JSON.parse(raw)
+  const report = npmAudit(['--omit=dev'])
   const vulnerabilities = Object.values(report.vulnerabilities || {})
   const blocking = vulnerabilities.filter((v) => v.severity === 'high' || v.severity === 'critical')
   if (blocking.length === 0) {
@@ -44,8 +57,7 @@ function auditGate() {
 
   // 开发依赖只报告不拦截：vite/esbuild 的历史洞不影响线上产物
   try {
-    const devRaw = npmRun(['audit', '--json'])
-    const dev = Object.values(JSON.parse(devRaw).vulnerabilities || {})
+    const dev = Object.values(npmAudit([]).vulnerabilities)
     const devHigh = dev.filter((v) => v.severity === 'high' || v.severity === 'critical')
     if (devHigh.length) warn('开发依赖高危（不拦截）', devHigh.map((v) => v.name).join(', '))
   } catch {

@@ -44,7 +44,7 @@ test('listAssignments：POST student/list，不带 siteId，透传 records', asy
   assert.equal(seen.headers['Blade-Auth'], 'tk')
 })
 
-test('getAssignmentDetail：参数名是单数 assignmentId，附件元数据被提取', async (t) => {
+test('getAssignmentDetail：参数名是单数 assignmentId，返回正文要求、说明与附件', async (t) => {
   let seenUrl = ''
   t.mock.method(globalThis, 'fetch', async (url) => {
     seenUrl = String(url)
@@ -52,6 +52,8 @@ test('getAssignmentDetail：参数名是单数 assignmentId，附件元数据被
       code: 200,
       success: true,
       data: {
+        assignmentContent: '<p>完成实验，提交<strong>实验报告</strong>。</p>',
+        assignmentDescription: '报告中附上运行截图。',
         assignmentResource: [
           { resourceId: 'r1', resourceName: '实验指导书.pdf', resourceType: 'pdf' },
           { resourceId: '', resourceName: '坏的' },
@@ -64,11 +66,26 @@ test('getAssignmentDetail：参数名是单数 assignmentId，附件元数据被
   const detail = await getAssignmentDetail({ token: 'tk', assignmentId: 'A-99' })
 
   assert.ok(seenUrl.includes('work/detail?assignmentId=A-99'), seenUrl)
+  assert.equal(detail.content, '<p>完成实验，提交<strong>实验报告</strong>。</p>')
+  assert.equal(detail.description, '报告中附上运行截图。')
   assert.deepEqual(detail.attachments, [
     { resourceId: 'r1', resourceName: '实验指导书.pdf', resourceType: 'pdf' },
     { resourceId: '', resourceName: '坏的', resourceType: '' },
   ].filter((item) => item.resourceId))
   assert.equal(detail.attachments.length, 1, '空 resourceId 应被过滤')
+})
+
+test('getAssignmentDetail：兼容 MYUCLOUD 的说明别名、结构化正文与空要求', async (t) => {
+  const cases = [
+    [{ assignmentContent: { className: '教学班', task: '完成第 3 题' }, description: '独立完成' },
+      { content: '{\n  "className": "教学班",\n  "task": "完成第 3 题"\n}', description: '独立完成', attachments: [] }],
+    [{ content: '教材 P30 第 1—5 题' }, { content: '', description: '教材 P30 第 1—5 题', attachments: [] }],
+    [{ assignmentContent: null, assignmentDescription: null }, { content: '', description: '', attachments: [] }],
+  ]
+  for (const [data, expected] of cases) {
+    t.mock.method(globalThis, 'fetch', async () => json({ code: 200, success: true, data }))
+    assert.deepEqual(await getAssignmentDetail({ token: 'tk', assignmentId: 'a1' }), expected)
+  }
 })
 
 test('上游 401 映射为会话过期，而不是 502', async (t) => {
@@ -172,6 +189,24 @@ test('POST /api/ucloud/assignment/detail：缺 assignmentId 报 400', async () =
   const { app, store } = makeApp()
   await store.set('uc', { kind: 'ucloud', accessToken: 'tk', expiresAt: Date.now() + 86400000 })
   assert.equal((await post(app, '/api/ucloud/assignment/detail', { sessionId: 'uc' })).status, 400)
+})
+
+test('POST /api/ucloud/assignment/detail：登录后可读取老师的要求，无云邮会话不可读取', async (t) => {
+  const { app, store } = makeApp()
+  await store.set('uc', { kind: 'ucloud', accessToken: 'tk', expiresAt: Date.now() + 86400000 })
+  await store.set('jw', { kind: 'jwgl', cookies: 'x', expiresAt: Date.now() + 86400000 })
+  t.mock.method(globalThis, 'fetch', async () => json({
+    code: 200, success: true,
+    data: { assignmentContent: '<p>完成实验报告</p>', assignmentDescription: '附上源代码' },
+  }))
+  const response = await post(app, '/api/ucloud/assignment/detail', { sessionId: 'uc', assignmentId: 'a1' })
+  assert.equal(response.status, 200)
+  assert.deepEqual((await response.json()).data, {
+    content: '<p>完成实验报告</p>', description: '附上源代码', attachments: [],
+  })
+  for (const sessionId of ['jw', 'missing']) {
+    assert.equal((await post(app, '/api/ucloud/assignment/detail', { sessionId, assignmentId: 'a1' })).status, 401)
+  }
 })
 
 test('POST /api/ucloud/assignments：拉取成功即滑动续期（正常使用不掉线）', async (t) => {

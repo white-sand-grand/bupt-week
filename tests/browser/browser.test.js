@@ -871,6 +871,77 @@ test('手机宽度下不错位，触摸目标够大', async () => {
   }
 })
 
+test('主题：首次跟随系统，亮暗变化会更新页面和浏览器颜色', async () => {
+  const page = await browser.newPage({ colorScheme: 'dark' })
+  try {
+    await page.goto(APP_ORIGIN, { waitUntil: 'networkidle' })
+    assert.equal(await page.locator('.brand-mark').count(), 0, '移除左上角的周标识')
+    assert.equal(await page.locator('html').getAttribute('data-theme'), 'dark')
+    assert.equal(await page.locator('body').evaluate((el) => getComputedStyle(el).backgroundColor), 'rgb(18, 20, 23)')
+    assert.equal(await page.locator('meta[name="theme-color"]').getAttribute('content'), '#121417')
+    assert.equal(await page.locator('.login-form .button-primary').evaluate((el) => getComputedStyle(el).backgroundColor), 'rgb(126, 168, 239)')
+    assert.ok(await page.getByRole('button', { name: '切换到亮色模式' }).isVisible())
+    await page.emulateMedia({ colorScheme: 'light' })
+    await page.waitForFunction(() => document.documentElement.dataset.theme === 'light')
+    assert.equal(await page.locator('body').evaluate((el) => getComputedStyle(el).backgroundColor), 'rgb(247, 245, 240)')
+    assert.equal(await page.locator('meta[name="theme-color"]').getAttribute('content'), '#f7f5f0')
+  } finally {
+    await page.close()
+  }
+})
+
+test('主题：手动选择覆盖系统，课表随主题切换，刷新与退出后保留选择', async () => {
+  const page = await browser.newPage({ colorScheme: 'dark', viewport: { width: 390, height: 844 } })
+  try {
+    await page.route('**/api/ucloud/logout', (route) => fulfill(route, { success: true }))
+    await page.route('**/api/jwgl/logout', (route) => fulfill(route, { success: true }))
+    await loginAndOpenTimetable(page)
+    await page.waitForSelector('.course-item')
+    const darkCourse = await page.locator('.course-item').first().evaluate((el) => getComputedStyle(el).backgroundColor)
+    await page.getByRole('button', { name: '切换到亮色模式' }).click()
+    const lightCourse = await page.locator('.course-item').first().evaluate((el) => getComputedStyle(el).backgroundColor)
+    assert.notEqual(darkCourse, lightCourse, '课程卡颜色也应遵循手动主题')
+    assert.equal(await page.evaluate(() => localStorage.getItem('bupt-week-theme')), 'light')
+    await page.reload({ waitUntil: 'networkidle' })
+    assert.equal(await page.locator('html').getAttribute('data-theme'), 'light', '刷新时不能被系统暗色覆盖')
+    await page.click('.topbar-auth button')
+    await page.waitForSelector('.login-form')
+    assert.equal(await page.locator('html').getAttribute('data-theme'), 'light', '退出不应清掉主题偏好')
+    await page.setViewportSize({ width: 320, height: 740 })
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), '320px 窄屏不应横向溢出')
+    await page.getByRole('button', { name: '切换到暗色模式' }).click()
+    await page.emulateMedia({ colorScheme: 'light' })
+    assert.equal(await page.locator('html').getAttribute('data-theme'), 'dark', '手动选择不应被系统变化覆盖')
+  } finally {
+    await page.close()
+  }
+})
+
+test('主题：偏好存储无法读写时仍能切换', async () => {
+  const page = await browser.newPage({ colorScheme: 'light' })
+  const errors = []
+  page.on('pageerror', (error) => errors.push(error.message))
+  try {
+    await page.addInitScript(() => {
+      for (const name of ['getItem', 'setItem']) {
+        const original = Storage.prototype[name]
+        Storage.prototype[name] = function (key, ...args) {
+          if (key === 'bupt-week-theme') throw new DOMException('Blocked', 'SecurityError')
+          return original.call(this, key, ...args)
+        }
+      }
+    })
+    await page.goto(APP_ORIGIN, { waitUntil: 'networkidle' })
+    await page.getByRole('button', { name: '切换到暗色模式' }).click()
+    assert.equal(await page.locator('html').getAttribute('data-theme'), 'dark')
+    await page.getByRole('button', { name: '切换到亮色模式' }).click()
+    assert.equal(await page.locator('html').getAttribute('data-theme'), 'light')
+    assert.deepEqual(errors, [])
+  } finally {
+    await page.close()
+  }
+})
+
 test('普通浏览器不自动发起企业微信流程', async () => {
   const page = await browser.newPage()
   let wecomHits = 0
@@ -1319,8 +1390,11 @@ test('作业：按紧急度排序、按课程分组、状态徽标正确', async
     assert.equal(badges[1], '今天截止')
     assert.equal(badges[2], '已提交')
 
-    // 顶栏计数：未完成 2（已提交的不算）
-    assert.match(await page.textContent('.counter'), /2 项未完成/)
+    // 顶栏按当前显示的作业分状态统计。
+    const summary = await page.textContent('.status-summary')
+    assert.match(summary, /已逾期\s*1/)
+    assert.match(summary, /临近截止\s*1/)
+    assert.doesNotMatch(summary, /已完成/)
   } finally {
     await page.close()
   }
@@ -1356,6 +1430,34 @@ test('作业：「只看未提交」默认开，点「显示全部」看全量�
   }
 })
 
+test('作业：右侧只统计待处理状态，临近截止合并今天与一周内，窄屏标签不溢出', async () => {
+  const page = await browser.newPage({ viewport: { width: 320, height: 844 } })
+  try {
+    const fixture = ASSIGNMENTS_FIXTURE()
+    fixture.data.assignments.push(
+      { id: 'near', siteId: 's1', siteName: '数据结构', assignmentTitle: '三天后截止', assignmentStatus: 99, assignmentEndTime: beijingClockFromNow(72 * 3600_000) },
+      { id: 'later', siteId: 's1', siteName: '数据结构', assignmentTitle: '两周后截止', assignmentStatus: 99, assignmentEndTime: beijingClockFromNow(14 * 24 * 3600_000) },
+      { id: 'undated', siteId: 's1', siteName: '数据结构', assignmentTitle: '未设置截止', assignmentStatus: 99 },
+    )
+    await loginAndOpenAssignments(page, fixture)
+    await page.waitForSelector('.status-tag')
+    const summary = page.locator('.status-summary')
+    assert.match(await summary.textContent(), /已逾期\s*1/)
+    assert.match(await summary.textContent(), /临近截止\s*2/)
+    assert.match(await summary.textContent(), /待完成\s*2/)
+    assert.doesNotMatch(await summary.textContent(), /已完成|项未完成/)
+    const before = await summary.textContent()
+    await page.click('.filter-toggle')
+    assert.equal(await summary.textContent(), before, '显示全部时也不统计已完成作业')
+    for (const mode of ['light', 'dark']) {
+      if (await page.locator('html').getAttribute('data-theme') !== mode) await page.locator('.theme-toggle').click()
+      assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${mode} 主题下多个状态标签不应撑宽页面`)
+    }
+  } finally {
+    await page.close()
+  }
+})
+
 test('作业：全交了在默认过滤态直接落专门空态，可切「显示全部」看已提交', async () => {
   const page = await browser.newPage()
   try {
@@ -1381,22 +1483,26 @@ test('作业：全交了在默认过滤态直接落专门空态，可切「显�
   }
 })
 
-test('作业：展开懒加载附件，「去交作业」经 CAS dev=1 入口指向该作业', async () => {
+test('作业：展开懒加载要求与附件，再次展开用缓存，提交链接仍指向该作业', async () => {
   const page = await browser.newPage()
   try {
-    await loginAndOpenAssignments(page)
-    await page.waitForSelector('.card')
-
+    let detailRequests = 0
     await page.route('**/api/ucloud/assignment/detail', (route) => {
+      detailRequests += 1
       const body = route.request().postDataJSON() || {}
       assert.equal(body.assignmentId, 'hw-lab0')
       return fulfill(route, {
         success: true,
         data: {
+          content: '<p>完成环境配置，提交<strong>实验报告</strong>。</p><ol><li>安装工具链</li><li>附上运行截图</li></ol>',
+          description: '请独立完成，并注明操作系统版本。',
           attachments: [{ resourceId: 'r1', resourceName: 'lab0-handout.pdf', resourceType: 'pdf' }],
         },
       })
     })
+    await loginAndOpenAssignments(page)
+    await page.waitForSelector('.card')
+    assert.equal(detailRequests, 0, '列表阶段不应批量拉取正文详情')
 
     // 展开第一张卡（逾期作业）
     await page.click('.card:nth-child(2) .card-main')
@@ -1404,6 +1510,13 @@ test('作业：展开懒加载附件，「去交作业」经 CAS dev=1 入口指
 
     const attachment = await page.textContent('.attachment-list li button')
     assert.match(attachment, /lab0-handout\.pdf/)
+    assert.equal(await page.textContent('.assignment-requirements strong'), '实验报告')
+    assert.equal(await page.locator('.assignment-requirements ol li').count(), 2)
+    assert.match(await page.textContent('.assignment-requirements'), /请独立完成/)
+    await page.click('.card:nth-child(2) .card-main')
+    await page.click('.card:nth-child(2) .card-main')
+    await page.waitForSelector('.assignment-requirements')
+    assert.equal(detailRequests, 1, '正文和附件应共用一次详情请求与缓存')
 
     // 深链：§3.2 的裸详情页 URL。不经 CAS 中转——其桌面登录页对现代浏览器
     // 服务端故障（皮肤 400 白屏、dev=1 二次点击 400，见 api-reference §3.2.1）；
@@ -1421,6 +1534,104 @@ test('作业：展开懒加载附件，「去交作业」经 CAS dev=1 入口指
     const hint = await page.textContent('.go-submit ~ .detail-hint')
     assert.match(hint, /微信/)
     assert.match(hint, /空白页/)
+  } finally {
+    await page.close()
+  }
+})
+
+test('作业要求：纯文本保留换行，空正文给出查看附件的提示', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.route('**/api/ucloud/assignment/detail', (route) => fulfill(route, {
+      success: true,
+      data: route.request().postDataJSON().assignmentId === 'hw-lab0'
+        ? { content: '第一步：安装工具链。\n第二步：提交截图。', description: '', attachments: [] }
+        : { content: '<p>&nbsp;<br></p>', description: '', attachments: [] },
+    }))
+    await loginAndOpenAssignments(page)
+    await page.locator('.card-main', { hasText: 'lab0 环境配置' }).click()
+    assert.equal(await page.textContent('.requirements-plain'), '第一步：安装工具链。\n第二步：提交截图。')
+    assert.equal(await page.locator('.requirements-plain').evaluate((el) => getComputedStyle(el).whiteSpace), 'pre-wrap')
+    await page.locator('.card-main', { hasText: '实验一 线性表' }).click()
+    await page.waitForSelector('.requirements-empty')
+    assert.match(await page.textContent('.requirements-empty'), /请查看附件/)
+  } finally {
+    await page.close()
+  }
+})
+
+test('作业要求：加载失败可重试，等待详情时仍可前往云邮提交', async () => {
+  const page = await browser.newPage()
+  try {
+    let attempts = 0
+    let release
+    const pending = new Promise((resolve) => { release = resolve })
+    await page.route('**/api/ucloud/assignment/detail', async (route) => {
+      attempts += 1
+      if (attempts === 1) {
+        await pending
+        return fulfill(route, { success: false, msg: '上游暂时不可达' }, 502)
+      }
+      return fulfill(route, { success: true, data: { content: '教材 P55 第 1—10 题', attachments: [] } })
+    })
+    await loginAndOpenAssignments(page)
+    await page.locator('.card-main', { hasText: 'lab0 环境配置' }).click()
+    await page.waitForSelector('.card-detail [role="status"]')
+    assert.match(await page.textContent('.card-detail [role="status"]'), /正在加载作业要求和附件/)
+    assert.ok(await page.locator('.go-submit').isVisible())
+    release()
+    await page.waitForSelector('.card-detail [role="alert"]')
+    await page.getByRole('button', { name: '重试加载详情' }).click()
+    await page.waitForSelector('.requirements-plain')
+    assert.equal(await page.textContent('.requirements-plain'), '教材 P55 第 1—10 题')
+    assert.equal(attempts, 2)
+  } finally {
+    await page.close()
+  }
+})
+
+test('作业要求：保留富文本与学校图片，移除可执行内容，手机明暗主题均不溢出', async () => {
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } })
+  try {
+    const unsafeRequests = []
+    page.on('request', (request) => {
+      if (request.url().includes('untrusted.example')) unsafeRequests.push(request.url())
+    })
+    await page.route('**/file/ucloud/requirements.png?signature=a%2Fb', (route) => route.fulfill({
+      contentType: 'image/png',
+      body: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Zl1sAAAAASUVORK5CYII=', 'base64'),
+    }))
+    await page.route('**/api/ucloud/assignment/detail', (route) => fulfill(route, {
+      success: true,
+      data: {
+        content: '<h2>实验步骤</h2><p style="position:fixed" onclick="window.requirementsUnsafe = true">完成实验，保留<strong>运行截图</strong>。</p>'
+          + '<ul><li>配置环境</li><li>提交报告</li></ul><table><tr><th>项目</th><th>要求</th></tr><tr><td>代码</td><td>独立完成</td></tr></table>'
+          + '<p>' + 'long-unbroken-requirement-'.repeat(20) + '</p>'
+          + '<a href="https://example.com/guide">参考资料</a><a href="java&#10;script:alert(1)">危险链接</a>'
+          + '<img src="https://fileucloud.bupt.edu.cn/ucloud/requirements.png?signature=a%2Fb" onerror="window.requirementsUnsafe = true" style="width:2000px" alt="实验示意图">'
+          + '<script>window.requirementsUnsafe = true</script><style>body { display:none }</style>'
+          + '<iframe src="https://untrusted.example/frame"></iframe><svg onload="window.requirementsUnsafe = true"></svg>'
+          + '<img src="https://untrusted.example/tracker" onerror="window.requirementsUnsafe = true"><form action="https://untrusted.example"><input autofocus></form>',
+        attachments: [],
+      },
+    }))
+    await loginAndOpenAssignments(page)
+    await page.locator('.card-main', { hasText: 'lab0 环境配置' }).click()
+    await page.waitForSelector('.assignment-requirements img')
+    const requirements = page.locator('.assignment-requirements')
+    assert.equal(await requirements.locator('strong').textContent(), '运行截图')
+    assert.equal(await requirements.locator('table td').count(), 2)
+    assert.equal(await requirements.locator('script, style, iframe, svg, form, input, [onclick], [onerror], [style]').count(), 0)
+    assert.equal(await requirements.locator('a[href]').count(), 1)
+    assert.equal(await requirements.locator('a[href]').getAttribute('rel'), 'noopener noreferrer')
+    assert.equal(await requirements.locator('img').getAttribute('src'), '/file/ucloud/requirements.png?signature=a%2Fb')
+    assert.equal(await page.evaluate(() => window.requirementsUnsafe), undefined)
+    assert.deepEqual(unsafeRequests, [], '正文不应加载外站脚本、框架或追踪图片')
+    for (const colorScheme of ['light', 'dark']) {
+      await page.emulateMedia({ colorScheme })
+      assert.ok(await requirements.isVisible())
+      assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${colorScheme} 主题下正文不应撑宽手机页面`)
+    }
   } finally {
     await page.close()
   }
@@ -1677,7 +1888,8 @@ test('部署形态下企微登录指向后端域名，不是 Pages 自己的', a
   // shell 只在 Windows 下需要（npm 是 npm.cmd）。
   execFileSync('npm', ['run', 'build'], {
     cwd: process.cwd(),
-    env: { ...process.env, VITE_BACKEND_URL: SENTINEL },
+    // Vite dev server 会把当前进程设为 development；部署构建必须显式使用生产环境。
+    env: { ...process.env, NODE_ENV: 'production', VITE_BACKEND_URL: SENTINEL },
     stdio: 'pipe',
     shell: process.platform === 'win32',
   })
@@ -2052,7 +2264,7 @@ test('班级：确认完成移出未提交列表，刷新保留、按账号隔�
             chapterName: '高等数学',
             siteId: 'class:cls-1',
             siteName: '软件 2301 班',
-            assignmentEndTime: '2026-11-01 23:59',
+            assignmentEndTime: beijingClockFromNow(20 * 3600_000),
             assignmentStatus: 99,
             content: 'P55 1-10 题，交到学委邮箱。',
             createdBy: '2021999888',
@@ -2084,7 +2296,7 @@ test('班级：确认完成移出未提交列表，刷新保留、按账号隔�
     assert.ok(await page.locator('.view .go-submit').isEnabled())
     assert.equal(await page.textContent('.view .go-submit'), '确认完成')
     assert.equal(await page.getAttribute('.view .go-submit', 'href'), null, '不应带跳转地址')
-    assert.match(await page.textContent('.view .counter'), /1 项未完成/)
+    assert.match(await page.textContent('.view .status-summary'), /临近截止\s*1/)
 
     // 附件区空手落定显示「没有附件」，而不是拿 UUID 去打云邮详情接口吃假报错
     await page.waitForFunction(() => document.querySelector('.view .detail-hint')?.textContent.includes('没有附件'))
@@ -2093,12 +2305,13 @@ test('班级：确认完成移出未提交列表，刷新保留、按账号隔�
     await page.click('.view .go-submit')
     await page.waitForFunction(() => document.querySelector('.view .empty')?.textContent.includes('没有未提交的作业'))
     assert.equal(await page.locator('.view .card').count(), 0)
-    assert.equal(await page.locator('.view .counter').count(), 0)
+    assert.equal(await page.locator('.view .status-tag').count(), 0)
 
     // 完成的卡片仍保留在全量列表，状态与倒计时同步更新。
     await page.click('.filter-toggle')
     await page.waitForSelector('.view .card-done')
     assert.equal(await page.textContent('.view .badge'), '已完成')
+    assert.equal(await page.locator('.view .status-tag').count(), 0, '已完成的班级作业也不参与统计')
     assert.equal(await page.locator('.view .countdown, .view .deadline-track').count(), 0)
     assert.equal(await page.textContent('.view .go-submit'), '标为未完成')
 
@@ -2130,7 +2343,7 @@ test('班级：确认完成移出未提交列表，刷新保留、按账号隔�
     await page.click('.filter-toggle')
     await page.waitForSelector('.view .card')
     assert.equal(await page.locator('.view .card-done').count(), 0)
-    assert.match(await page.textContent('.view .counter'), /1 项未完成/)
+    assert.match(await page.textContent('.view .status-summary'), /临近截止\s*1/)
     assert.equal(await page.textContent('.view .go-submit'), '确认完成')
     assert.equal(sharedAssignmentDeleted, false, '确认完成不能删除全班共享的作业')
   } finally {

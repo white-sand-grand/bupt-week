@@ -402,12 +402,6 @@ h2 {
   border: 1px solid var(--brand-100);
 }
 
-@media (prefers-color-scheme: dark) {
-  .counter {
-    color: var(--brand-600);
-  }
-}
-
 .notice-error {
   margin: 0;
   padding: 0.625rem 0.75rem;
@@ -468,12 +462,6 @@ h2 {
   cursor: pointer;
 }
 
-@media (prefers-color-scheme: dark) {
-  .entry-toggle {
-    color: var(--brand-500);
-  }
-}
-
 .entry-form {
   display: grid;
   gap: 0.625rem;
@@ -511,8 +499,8 @@ h2 {
   padding: 0.5rem 1.25rem;
   border: 1px solid transparent;
   border-radius: var(--radius-sm);
-  color: #fff;
-  background: linear-gradient(180deg, var(--brand-600), var(--brand-700));
+  color: var(--button-ink);
+  background: var(--button-bg);
   font: inherit;
   font-weight: 500;
   cursor: pointer;
@@ -561,12 +549,6 @@ h3 {
   color: var(--brand-700);
   background: var(--brand-050);
   border: 1px solid var(--brand-100);
-}
-
-@media (prefers-color-scheme: dark) {
-  .owner-chip {
-    color: var(--brand-600);
-  }
 }
 
 .class-meta {
@@ -633,12 +615,6 @@ h3 {
   font-weight: 500;
   letter-spacing: 0.08em;
   cursor: pointer;
-}
-
-@media (prefers-color-scheme: dark) {
-  .code-chip {
-    color: var(--brand-500);
-  }
 }
 
 .copied {

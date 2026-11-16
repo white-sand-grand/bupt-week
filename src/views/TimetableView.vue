@@ -381,9 +381,9 @@ watch(() => props.ready, startSync)
 }
 
 .time-mode button.active {
-  color: #fff;
+  color: var(--button-ink);
   font-weight: 500;
-  background: var(--brand-600);
+  background: var(--button-bg);
 }
 
 h2 {
@@ -476,7 +476,7 @@ h2 {
   gap: 0.375rem;
   color: var(--warn);
   background: var(--warn-bg);
-  border-color: #fde68a;
+  border-color: var(--warn-line);
 }
 
 .notice-warn .notice-text {
@@ -496,7 +496,7 @@ h2 {
   flex: 1 1 12rem;
   min-height: var(--touch);
   padding: 0.5rem 0.75rem;
-  border: 1px solid #fde68a;
+  border: 1px solid var(--warn-line);
   border-radius: var(--radius-sm);
   font-family: inherit;
   font-size: 16px;
@@ -607,11 +607,10 @@ h2 {
 
 /* 今日列：表头品牌色胶囊 + 「今天」角标，列身淡染贯穿 */
 .grid thead .today {
-  color: #fff;
+  color: var(--button-ink);
   font-weight: 600;
-  background: var(--brand-600);
+  background: var(--button-bg);
   border-radius: var(--radius-sm);
-  box-shadow: inset 0 -2px 0 var(--brand-700);
 }
 
 .today-tag {
@@ -619,18 +618,18 @@ h2 {
   margin-top: 0.1rem;
   font-size: 0.625rem;
   font-weight: 500;
-  color: var(--brand-100);
-  background: rgb(255 255 255 / 0.18);
+  color: var(--button-ink);
+  background: color-mix(in srgb, var(--button-ink) 12%, transparent);
   border-radius: var(--radius-pill);
   padding: 0 0.35rem;
 }
 
 .grid thead .today .day-date {
-  color: rgb(255 255 255 / 0.8);
+  color: var(--button-ink);
 }
 
 .cell-today {
-  background: rgba(42, 108, 224, 0.09);
+  background: var(--brand-050);
   background: color-mix(in srgb, var(--brand-500) 9%, transparent);
 }
 
@@ -737,24 +736,22 @@ h2 {
 
 /* 8 色课程色板：柔和底色 + 同系边框/文字 + 左缘强色。
    去掉了灰白系——它看起来像未渲染/禁用态。 */
-.c0 { --c-strong: #3b82f6; background: #eff6ff; border-color: #bfdbfe; color: #1e40af; }
-.c1 { --c-strong: #14b8a6; background: #f0fdfa; border-color: #99f6e4; color: #115e59; }
-.c2 { --c-strong: #22c55e; background: #f0fdf4; border-color: #bbf7d0; color: #166534; }
-.c3 { --c-strong: #eab308; background: #fffbeb; border-color: #fde68a; color: #92400e; }
-.c4 { --c-strong: #f97316; background: #fff7ed; border-color: #fed7aa; color: #9a3412; }
-.c5 { --c-strong: #f43f5e; background: #fff1f2; border-color: #fecdd3; color: #9f1239; }
-.c6 { --c-strong: #8b5cf6; background: #f5f3ff; border-color: #ddd6fe; color: #5b21b6; }
-.c7 { --c-strong: #06b6d4; background: #ecfeff; border-color: #a5f3fc; color: #155e75; }
+.c0 { --c-strong: #758fa8; background: #edf0f3; border-color: #cad5df; color: #3e536b; }
+.c1 { --c-strong: #6c9587; background: #eaf0ec; border-color: #c7d8cd; color: #3f6456; }
+.c2 { --c-strong: #8b9c68; background: #eef0e6; border-color: #d1d8bd; color: #586a3e; }
+.c3 { --c-strong: #b59a57; background: #f5f0df; border-color: #e1d5b4; color: #806126; }
+.c4 { --c-strong: #b98862; background: #f7ede2; border-color: #e6cfb8; color: #825a36; }
+.c5 { --c-strong: #ae7b78; background: #f3e9e6; border-color: #dfc9c3; color: #825653; }
+.c6 { --c-strong: #9787ab; background: #eeebf1; border-color: #d5ccdf; color: #6d587e; }
+.c7 { --c-strong: #779aa2; background: #eaf0f1; border-color: #c7d8db; color: #476d75; }
 
-@media (prefers-color-scheme: dark) {
-  /* 深色下文字整体提亮一档，保证在色底上的可读性 */
-  .c0 { --c-strong: #60a5fa; background: #17233a; border-color: #2b4468; color: #bfdbfe; }
-  .c1 { --c-strong: #2dd4bf; background: #102e2b; border-color: #1f5049; color: #99f6e4; }
-  .c2 { --c-strong: #4ade80; background: #132718; border-color: #275233; color: #bbf7d0; }
-  .c3 { --c-strong: #facc15; background: #2b2410; border-color: #55461a; color: #fde68a; }
-  .c4 { --c-strong: #fb923c; background: #2b1c0e; border-color: #5c3a1a; color: #fed7aa; }
-  .c5 { --c-strong: #fb7185; background: #2b1216; border-color: #5c2430; color: #fecdd3; }
-  .c6 { --c-strong: #a78bfa; background: #221a38; border-color: #43356b; color: #ddd6fe; }
-  .c7 { --c-strong: #22d3ee; background: #102a33; border-color: #1e4a57; color: #a5f3fc; }
-}
+/* 跟随手动主题，不能只依据系统的 prefers-color-scheme。 */
+:global([data-theme='dark'] .course-item.c0) { --c-strong: #60a5fa; background: #17233a; border-color: #2b4468; color: #bfdbfe; }
+:global([data-theme='dark'] .course-item.c1) { --c-strong: #2dd4bf; background: #102e2b; border-color: #1f5049; color: #99f6e4; }
+:global([data-theme='dark'] .course-item.c2) { --c-strong: #4ade80; background: #132718; border-color: #275233; color: #bbf7d0; }
+:global([data-theme='dark'] .course-item.c3) { --c-strong: #facc15; background: #2b2410; border-color: #55461a; color: #fde68a; }
+:global([data-theme='dark'] .course-item.c4) { --c-strong: #fb923c; background: #2b1c0e; border-color: #5c3a1a; color: #fed7aa; }
+:global([data-theme='dark'] .course-item.c5) { --c-strong: #fb7185; background: #2b1216; border-color: #5c2430; color: #fecdd3; }
+:global([data-theme='dark'] .course-item.c6) { --c-strong: #a78bfa; background: #221a38; border-color: #43356b; color: #ddd6fe; }
+:global([data-theme='dark'] .course-item.c7) { --c-strong: #22d3ee; background: #102a33; border-color: #1e4a57; color: #a5f3fc; }
 </style>

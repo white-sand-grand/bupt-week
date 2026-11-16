@@ -6,8 +6,8 @@ export const fetchAssignments = (sessionId) =>
     .then((data) => data.assignments)
 
 /**
- * 单个作业详情（附件元数据）。卡片展开时懒加载。
- * @returns {Promise<{ attachments: Array<{resourceId, resourceName, resourceType}> }>}
+ * 单个作业详情（正文要求、补充说明与附件）。卡片展开时懒加载。
+ * @returns {Promise<{ content: string, description: string, attachments: Array<{resourceId, resourceName, resourceType}> }>}
  */
 export const fetchAssignmentDetail = (sessionId, assignmentId) =>
   api('/api/ucloud/assignment/detail', { method: 'POST', body: { sessionId, assignmentId } })

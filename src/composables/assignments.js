@@ -12,7 +12,7 @@ import { friendlyError } from '../utils/errors.js'
  *   打开页面 → 先把本地缓存亮出来（有就立刻能看）→ 后台拉最新 →
  *   成功则覆盖并落盘；失败且手里有数据则保留，只挂一条「刷新失败」提示。
  *
- * 附件详情按卡片懒加载，缓存在内存里；退出登录清内存，localStorage 里的
+ * 正文要求与附件按卡片懒加载，缓存在内存里；退出登录清内存，localStorage 里的
  * 列表缓存按账号隔离保留（和课表同一个约定）。
  */
 
@@ -24,8 +24,8 @@ const stale = ref(false)
 /** 当前数据是什么时候落盘的（ISO）。给「更新于 X」提示用。 */
 const savedAt = ref(null)
 const expanded = ref({})
-const attachments = ref({})
-const attachmentState = ref({})
+const details = ref({})
+const detailState = ref({})
 const completedClassAssignments = ref(new Set())
 
 const classCompletionKey = (username) => `bupt-week-class-completed-v1:${encodeURIComponent(username)}`
@@ -43,13 +43,14 @@ watch(() => auth.username.value, (username) => {
 }, { immediate: true, flush: 'sync' })
 
 let revision = 0
+let detailRevision = 0
 
 /** 展示列表只留本学期：截止已过宽限期（60 天）的往期作业（含往期未交）不再出现。
  *  解析不了截止时间的一律保留——映射失败不能误杀正常作业。 */
 const assignments = computed(() =>
   sortAssignments(raw.value.map((record) => normalizeAssignment(record))).filter(isCurrentTerm))
 
-/** 未提交判定，与「X 项未完成」计数同口径：!isCompleted 且非往期未交。 */
+/** 未提交判定：!isCompleted 且非往期未交。 */
 function isUnsubmitted(item) {
   return !item.isCompleted && item.level !== 'missed'
 }
@@ -97,9 +98,6 @@ const groups = computed(() => {
     : classGroups.value
   return [...groupByCourse(cloud), ...classPart]
 })
-
-const unfinishedCount = computed(() => assignments.value.filter(isUnsubmitted).length
-  + classGroups.value.reduce((count, group) => count + group.items.filter(isUnsubmitted).length, 0))
 
 /** 「只看未提交」开着但列表空了：是全交了而不是本来没数据，提示口径不一样。 */
 const filteredEmpty = computed(() =>
@@ -154,14 +152,14 @@ async function load() {
   await refresh()
 }
 
-/** 展开卡片：懒加载附件详情，每个作业只拉一次（失败可用 retryAttachment 重拉）。 */
+/** 展开卡片：懒加载要求与附件，每个作业只拉一次（失败可重试）。 */
 async function toggle(id) {
   if (expanded.value[id]) {
     expanded.value = { ...expanded.value, [id]: false }
     return
   }
   expanded.value = { ...expanded.value, [id]: true }
-  await loadAttachments(id)
+  await loadDetail(id)
 }
 
 /** 这份 id 是否班级手动录入的作业：班级分组的条目全来自班级（courseId 形如 class:{id}）。 */
@@ -170,27 +168,31 @@ function isClassAssignmentId(id) {
     group.items.some((item) => item.id === id))
 }
 
-async function loadAttachments(id) {
-  if (attachments.value[id] || attachmentState.value[id] === 'loading') return
+async function loadDetail(id) {
+  if (details.value[id] || detailState.value[id] === 'loading') return
   // 班级录入的作业不在云邮系统里：附件恒为空。拿它的 UUID 去打云邮详情接口
   // 必然失败，会让同学看到假的「附件加载失败」，所以直接空手落定。
   if (isClassAssignmentId(id)) {
-    attachments.value = { ...attachments.value, [id]: [] }
-    attachmentState.value = { ...attachmentState.value, [id]: 'done' }
+    detailState.value = { ...detailState.value, [id]: 'done' }
     return
   }
-  attachmentState.value = { ...attachmentState.value, [id]: 'loading' }
+  const mine = detailRevision
+  const sessionId = auth.sessionIdFor('ucloud')
+  detailState.value = { ...detailState.value, [id]: 'loading' }
   try {
-    const detail = await fetchAssignmentDetail(auth.sessionIdFor('ucloud'), id)
-    attachments.value = { ...attachments.value, [id]: detail.attachments }
-    attachmentState.value = { ...attachmentState.value, [id]: 'done' }
+    const detail = await fetchAssignmentDetail(sessionId, id)
+    if (mine !== detailRevision || auth.sessionIdFor('ucloud') !== sessionId) return
+    details.value = { ...details.value, [id]: detail }
+    detailState.value = { ...detailState.value, [id]: 'done' }
   } catch {
-    attachmentState.value = { ...attachmentState.value, [id]: 'error' }
+    if (mine !== detailRevision || auth.sessionIdFor('ucloud') !== sessionId) return
+    detailState.value = { ...detailState.value, [id]: 'error' }
   }
 }
 
 function reset() {
   revision += 1
+  detailRevision += 1
   raw.value = []
   state.value = 'idle'
   error.value = ''
@@ -198,8 +200,8 @@ function reset() {
   savedAt.value = null
   unsubmittedOnly.value = DEFAULT_UNSUBMITTED_ONLY
   expanded.value = {}
-  attachments.value = {}
-  attachmentState.value = {}
+  details.value = {}
+  detailState.value = {}
 }
 
 watch(() => auth.ucloudReady.value, (ready) => {
@@ -208,7 +210,6 @@ watch(() => auth.ucloudReady.value, (ready) => {
 
 export const assignmentsStore = {
   groups: readonly(groups),
-  unfinishedCount: readonly(unfinishedCount),
   unsubmittedOnly: readonly(unsubmittedOnly),
   filteredEmpty: readonly(filteredEmpty),
   state: readonly(state),
@@ -216,13 +217,13 @@ export const assignmentsStore = {
   stale: readonly(stale),
   savedAt: readonly(savedAt),
   expanded: readonly(expanded),
-  attachments: readonly(attachments),
-  attachmentState: readonly(attachmentState),
+  details: readonly(details),
+  detailState: readonly(detailState),
   load,
   retry: refresh,
   toggle,
   toggleUnsubmittedOnly,
   toggleClassCompleted,
-  retryAttachment: loadAttachments,
+  retryDetail: loadDetail,
   reset,
 }

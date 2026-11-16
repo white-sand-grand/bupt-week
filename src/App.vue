@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { api } from './api/client.js'
 import { auth } from './composables/auth.js'
+import { theme } from './composables/theme.js'
 import { wecomStartUrl } from './api/auth.js'
 import { isInWechatBrowser } from './utils/platform.js'
 import LoginPanel from './components/LoginPanel.vue'
@@ -84,17 +85,35 @@ onMounted(async () => {
   <div class="shell">
     <header class="topbar">
       <div class="brand">
-        <span class="brand-mark" aria-hidden="true">周</span>
         <h1>BUPT-week</h1>
+        <span class="brand-caption">校园日程</span>
       </div>
 
-      <!-- 登录是页面里的常驻元素，不是门禁：未登录也能进、能切视图 -->
-      <div class="topbar-auth">
-        <template v-if="auth.loggedIn.value">
-          <span class="who">{{ auth.realName.value || auth.username.value }}</span>
-          <button class="link-button" type="button" @click="auth.signOut()">退出</button>
-        </template>
-        <span v-else class="who muted">未登录</span>
+      <div class="topbar-tools">
+        <button
+          class="theme-toggle"
+          type="button"
+          :aria-label="theme.mode.value === 'dark' ? '切换到亮色模式' : '切换到暗色模式'"
+          :title="theme.mode.value === 'dark' ? '切换到亮色模式' : '切换到暗色模式'"
+          @click="theme.toggle()"
+        >
+          <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <template v-if="theme.mode.value === 'light'">
+              <circle cx="12" cy="12" r="4" />
+              <path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5" />
+            </template>
+            <path v-else d="M20.5 13A8.5 8.5 0 0 1 11 3.5 8.5 8.5 0 1 0 20.5 13Z" />
+          </svg>
+          <span class="theme-label">{{ theme.mode.value === 'dark' ? '暗色' : '亮色' }}</span>
+        </button>
+        <!-- 登录不挡下面的视图；主题与退出操作各自独立。 -->
+        <div class="topbar-auth">
+          <template v-if="auth.loggedIn.value">
+            <span class="who" :title="auth.realName.value || auth.username.value">{{ auth.realName.value || auth.username.value }}</span>
+            <button class="link-button" type="button" @click="auth.signOut()">退出</button>
+          </template>
+          <span v-else class="who muted">未登录</span>
+        </div>
       </div>
     </header>
 
@@ -110,6 +129,7 @@ onMounted(async () => {
 
     <nav class="tabs" aria-label="功能切换">
       <button
+        data-index="01"
         :class="['tab', { 'tab-active': view === 'timetable' }]"
         type="button"
         :aria-current="view === 'timetable'"
@@ -118,6 +138,7 @@ onMounted(async () => {
         课表
       </button>
       <button
+        data-index="02"
         :class="['tab', { 'tab-active': view === 'assignment' }]"
         type="button"
         :aria-current="view === 'assignment'"
@@ -126,6 +147,7 @@ onMounted(async () => {
         作业
       </button>
       <button
+        data-index="03"
         :class="['tab', { 'tab-active': view === 'courseware' }]"
         type="button"
         :aria-current="view === 'courseware'"
@@ -134,6 +156,7 @@ onMounted(async () => {
         课件
       </button>
       <button
+        data-index="04"
         :class="['tab', { 'tab-active': view === 'class' }]"
         type="button"
         :aria-current="view === 'class'"
@@ -167,6 +190,8 @@ onMounted(async () => {
 <style scoped>
 .shell {
   min-height: 100vh;
+  max-width: 72rem;
+  margin: 0 auto;
   display: flex;
   flex-direction: column;
 }
@@ -178,58 +203,86 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 0.75rem;
-  padding: 0.625rem 1rem;
-  /* 先给实底再叠半透明混合：不支持 color-mix 的旧内核拿到实底，顶栏不会透 */
-  background: var(--surface);
-  background: color-mix(in srgb, var(--surface) 86%, transparent);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  gap: 0.5rem;
+  min-height: 5rem;
+  padding: 0.75rem var(--gutter);
+  background: var(--page);
   border-bottom: 1px solid var(--line);
 }
 
 .brand {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: 1rem;
+  flex-shrink: 0;
 }
 
-.brand-mark {
-  display: grid;
-  place-items: center;
-  width: 1.75rem;
-  height: 1.75rem;
-  border-radius: 0.5rem;
-  background: linear-gradient(135deg, var(--brand-600), var(--brand-500));
-  box-shadow: var(--shadow-sm), inset 0 1px 0 rgb(255 255 255 / 0.25);
-  color: #fff;
-  font-size: 0.9375rem;
-  font-weight: 600;
-  line-height: 1;
+.brand-caption {
+  padding-left: 1rem;
+  border-left: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 0.75rem;
+  letter-spacing: 0.08em;
 }
 
 h1 {
   margin: 0;
-  font-size: 1.0625rem;
-  letter-spacing: 0.01em;
+  font-family: var(--font-mono);
+  font-size: 1.125rem;
+  font-weight: 600;
+  letter-spacing: -0.04em;
+}
+
+.topbar-tools {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  min-width: var(--touch);
+  min-height: var(--touch);
+  padding: 0 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink-soft);
+  font: inherit;
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+.theme-toggle:hover {
+  border-color: var(--brand-500);
+  color: var(--brand-600);
+  background: var(--brand-050);
 }
 
 .topbar-auth {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
+  gap: 0.5rem;
   font-size: 0.8125rem;
 }
 
 .who {
+  max-width: 8rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--ink);
   font-weight: 500;
 }
 
 .link-button {
   min-height: var(--touch);
-  padding: 0 0.75rem;
-  border: 1px solid var(--line);
+  padding: 0 0.5rem;
+  border: 1px solid transparent;
   border-radius: var(--radius-pill);
   background: none;
   color: var(--ink-soft);
@@ -241,15 +294,6 @@ h1 {
 .link-button:active {
   color: var(--ink);
   background: var(--surface-sunken);
-}
-
-@media (prefers-color-scheme: dark) {
-  /* 深色下顶栏对比弱，给退出一个实底避免融进背景 */
-  .link-button {
-    background: var(--surface-sunken);
-    border-color: var(--line);
-    color: var(--ink-soft);
-  }
 }
 
 .banner {
@@ -265,74 +309,76 @@ h1 {
 }
 
 .banner-warn {
-  margin: 0.75rem 1rem 0;
+  margin: 0.75rem var(--gutter) 0;
   padding: 0.625rem 0.875rem;
   border-radius: var(--radius-md);
   font-size: 0.8125rem;
   line-height: 1.6;
   color: var(--warn);
   background: var(--warn-bg);
-  border: 1px solid #fde68a;
+  border: 1px solid var(--warn-line);
 }
 
-@media (prefers-color-scheme: dark) {
-  .banner-warn {
-    border-color: #55461a;
-  }
-}
-
-/* 分段控件：圆角容器内滑动高亮，比下划线 tab 更醒目 */
+/* 以编号和细下划线组织功能入口，保持工具界面的轻量感。 */
 .tabs {
   display: flex;
-  gap: 0.25rem;
-  margin: 0.75rem 1rem 0;
-  padding: 0.25rem;
-  background: var(--surface-sunken);
-  border: 1px solid var(--line-soft);
-  border-radius: var(--radius-pill);
+  gap: 1.5rem;
+  margin: 0.75rem var(--gutter) 0;
+  border-bottom: 1px solid var(--line);
 }
 
 .tab {
-  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.625rem;
   min-height: var(--touch);
-  padding: 0 0.5rem;
+  padding: 0.75rem 0;
+  margin-bottom: -1px;
   border: none;
+  border-bottom: 2px solid transparent;
   background: none;
-  color: var(--ink-soft);
+  color: var(--muted);
   font: inherit;
+  font-size: 0.875rem;
   cursor: pointer;
-  border-radius: var(--radius-pill);
-  transition: color 0.18s ease, background 0.18s ease, box-shadow 0.18s ease;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+
+.tab::before {
+  content: attr(data-index);
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  opacity: 0.65;
+}
+
+.tab:hover {
+  color: var(--ink);
 }
 
 .tab-active {
-  color: var(--brand-700);
-  font-weight: 600;
-  background: var(--surface);
-  box-shadow: var(--shadow-sm);
-}
-
-@media (prefers-color-scheme: dark) {
-  .tab-active {
-    color: #cfe0fa;
-    background: #2c313a;
-    box-shadow: 0 1px 2px rgb(0 0 0 / 0.4);
-  }
+  color: var(--brand-600);
+  font-weight: 500;
+  border-bottom-color: var(--brand-500);
 }
 
 .view {
   flex: 1;
-  padding: 1rem;
+  min-width: 0;
+  padding: 1.75rem var(--gutter) 2rem;
 }
 
 .footnote {
   display: flex;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
   gap: 0.4rem;
-  padding: 0.75rem 1rem calc(1.5rem + env(safe-area-inset-bottom, 0px));
+  margin: 0 var(--gutter);
+  padding: 1rem 0 calc(1.25rem + env(safe-area-inset-bottom, 0px));
+  border-top: 1px solid var(--line);
   color: var(--muted);
-  font-size: 0.75rem;
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
 }
 
 .status-dot {
@@ -360,23 +406,36 @@ h1 {
   }
 }
 
-@media (min-width: 48rem) {
-  .shell {
-    max-width: 64rem;
-    margin: 0 auto;
-    background: var(--surface);
-    box-shadow: var(--shadow-md);
-    border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+@media (max-width: 40rem) {
+  .brand-caption,
+  .theme-label {
+    display: none;
   }
 
-  /* 桌面上两个 tab 占满 64rem 太空，收窄居中成分段胶囊 */
+  .topbar {
+    min-height: 4.5rem;
+  }
+
+  .topbar-tools {
+    gap: 0.375rem;
+  }
+
+  .theme-toggle {
+    padding: 0;
+  }
+
+  .who {
+    max-width: 4.5rem;
+  }
+
   .tabs {
-    max-width: 26rem;
-    margin: 1rem auto 0;
+    gap: 0.75rem;
   }
 
-  .view {
-    padding: 1.25rem;
+  .tab {
+    flex: 1;
+    gap: 0.375rem;
+    min-width: 0;
   }
 }
 </style>
