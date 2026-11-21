@@ -5,6 +5,7 @@ import { mountProxyRoutes } from './routes/proxy.js'
 import { createApiRoutes } from './routes/api.js'
 import { createAuthRoutes } from './routes/auth.js'
 import { createClassesRoutes } from './routes/classes.js'
+import { createSourcesRoutes } from './routes/sources.js'
 
 /**
  * 后端应用工厂。
@@ -30,6 +31,9 @@ export function createBackend({ getSessionStore = null, getClassStore = null, al
   app.get('/api/health', (c) =>
     c.json({ success: true, data: { ok: true, now: new Date().toISOString() } }),
   )
+
+  // 公开仓库不需要学校登录态，也不访问会话存储。
+  app.route('/api/sources', createSourcesRoutes())
 
   // 业务接口与会话都依赖存储，没注入就不挂——而不是挂上去每次都 401。
   if (getSessionStore) {

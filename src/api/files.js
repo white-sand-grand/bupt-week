@@ -32,16 +32,20 @@ export async function resolveResourceDownload(sessionId, resourceId) {
  * 用 blob + <a download> 而不是直接跳转：跳转会离开单页应用，而且文件名会变成
  * S3 的 storageId.ext，而不是作业里显示的附件名。
  *
- * @param {string} fileUrl /file/... 路径
+ * @param {string} fileUrl /file/... 或 /api/sources/... 下载路径
  * @param {string} filename 保存用的文件名
  * @param {{ onProgress?: ({ received: number, total: number|null }) => void, signal?: AbortSignal }} [options]
  *   onProgress 在传了且浏览器支持流式读取时逐块回调；total 取自 Content-Length，
  *   代理或上游没给（chunked）时是 null，调用方按「只知道已下载多少」展示。
  */
 export async function downloadFile(fileUrl, filename, { onProgress, signal } = {}) {
-  // fileUrl 是后端返回的 /file/... 相对路径，同样要拼上后端地址
+  // 下载路径同样要拼上后端地址，兼容 Pages + Workers 跨域部署。
   const response = await fetch(backendUrl(fileUrl), { signal })
   if (!response.ok) {
+    if (fileUrl.startsWith('/api/sources/')) {
+      const payload = await response.json().catch(() => null)
+      if (payload?.msg) throw new Error(payload.msg)
+    }
     throw new Error(`下载失败（HTTP ${response.status}）`)
   }
 

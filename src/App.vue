@@ -10,6 +10,7 @@ import TimetableView from './views/TimetableView.vue'
 import AssignmentView from './views/AssignmentView.vue'
 import CoursewareView from './views/CoursewareView.vue'
 import ClassView from './views/ClassView.vue'
+import SourcesView from './views/SourcesView.vue'
 
 const state = ref('checking')
 const detail = ref('')
@@ -164,6 +165,15 @@ onMounted(async () => {
       >
         班级
       </button>
+      <button
+        data-index="05"
+        :class="['tab', { 'tab-active': view === 'sources' }]"
+        type="button"
+        :aria-current="view === 'sources'"
+        @click="view = 'sources'"
+      >
+        添加源
+      </button>
     </nav>
 
     <main class="view">
@@ -175,7 +185,8 @@ onMounted(async () => {
       />
       <AssignmentView v-else-if="view === 'assignment'" :ready="auth.ucloudReady.value" />
       <CoursewareView v-else-if="view === 'courseware'" :ready="auth.ucloudReady.value" />
-      <ClassView v-else />
+      <ClassView v-else-if="view === 'class'" />
+      <SourcesView v-else />
     </main>
 
     <footer class="footnote">
@@ -429,13 +440,18 @@ h1 {
   }
 
   .tabs {
-    gap: 0.75rem;
+    gap: 0.5rem;
   }
 
   .tab {
     flex: 1;
     gap: 0.375rem;
     min-width: 0;
+    white-space: nowrap;
+  }
+
+  .tab[data-index='05'] {
+    flex: 1.4;
   }
 }
 </style>

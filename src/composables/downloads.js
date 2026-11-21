@@ -1,6 +1,6 @@
 import { readonly, ref } from 'vue'
 import { auth } from './auth.js'
-import { downloadResource } from '../api/files.js'
+import { downloadFile, downloadResource } from '../api/files.js'
 import { friendlyError } from '../utils/errors.js'
 import { formatBytes } from '../utils/format.js'
 
@@ -32,18 +32,21 @@ function remove(id) {
 /**
  * 下载一个附件。在途（换地址/拉流）时直接返回——同一附件不允许叠两份
  * 下载；失败后再点即重试。
+ * GitHub 文件传入独立的状态键和 fileUrl，共用进度显示，无需学校会话。
  */
-async function start(resourceId, filename) {
+async function start(resourceId, filename, fileUrl = '') {
   const current = items.value[resourceId]
   if (current && (current.phase === 'resolving' || current.phase === 'downloading')) return
 
   patch(resourceId, { phase: 'resolving', received: 0, total: null, message: '' })
   try {
-    await downloadResource(auth.sessionIdFor('ucloud'), resourceId, filename, {
+    const options = {
       onProgress({ received, total }) {
         patch(resourceId, { phase: 'downloading', received, total })
       },
-    })
+    }
+    if (fileUrl) await downloadFile(fileUrl, filename, options)
+    else await downloadResource(auth.sessionIdFor('ucloud'), resourceId, filename, options)
     patch(resourceId, { phase: 'done', received: 0, total: null, message: '' })
     setTimeout(() => {
       if (items.value[resourceId]?.phase === 'done') remove(resourceId)

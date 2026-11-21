@@ -2350,3 +2350,154 @@ test('班级：确认完成移出未提交列表，刷新保留、按账号隔�
     await page.close()
   }
 })
+
+// ── 添加源 ─────────────────────────────────────────────────────────────────
+
+const SOURCE_REPOSITORY = { owner: 'teacher', repo: 'homework', ref: 'course/main', url: 'https://github.com/teacher/homework' }
+
+async function mockSources(page, { failDirectory = false, failDownload = false } = {}) {
+  const paths = []
+  const credentials = []
+  let directoryFailed = false
+  await page.route('**/api/sources/github**', async (route) => {
+    const request = route.request()
+    const url = new URL(request.url())
+    credentials.push({ body: request.postDataJSON(), authorization: request.headers().authorization })
+    if (url.pathname.endsWith('/download')) {
+      if (failDownload) return fulfill(route, { success: false, msg: '该文件使用 Git LFS 存储，请前往原仓库下载完整文件' }, 422)
+      return route.fulfill({ contentType: 'application/octet-stream', body: readFileSync(resolve('tests/browser/fixtures/sample.pdf')) })
+    }
+    if (url.pathname.endsWith('/contents')) {
+      const path = url.searchParams.get('path') || ''
+      paths.push(path)
+      assert.equal(url.searchParams.get('ref'), 'course/main')
+      if (failDirectory && !directoryFailed) {
+        directoryFailed = true
+        return fulfill(route, { success: false, msg: 'GitHub 暂时限制了访问频率，请稍后重试' }, 429)
+      }
+      const entries = path === ''
+        ? [{ name: '第一章', path: '第一章', type: 'dir', size: 0 }, { name: 'constructor', path: 'constructor', type: 'dir', size: 0 }]
+        : path === '第一章'
+          ? [{ name: '作业', path: '第一章/作业', type: 'dir', size: 0 }]
+          : path === 'constructor' ? [] : [{ name: '练习 #1.pdf', path: '第一章/作业/练习 #1.pdf', type: 'file', size: 455 }]
+      return fulfill(route, { success: true, data: { entries, limited: false } })
+    }
+    return fulfill(route, { success: true, data: { repository: SOURCE_REPOSITORY } })
+  })
+  return { paths, credentials }
+}
+
+test('添加源：未登录添加 → 展开 → 多级目录 → 文件落盘 → 返回与切页缓存 → 保存与移除', async () => {
+  const page = await browser.newPage()
+  try {
+    const { paths, credentials } = await mockSources(page)
+    await page.goto(APP_ORIGIN, { waitUntil: 'networkidle' })
+    await page.getByRole('button', { name: /添加源/ }).click()
+    assert.equal(await page.locator('.tabs button').count(), 5)
+    assert.equal(await page.locator('.topbar-auth').innerText(), '未登录')
+    const byrdocs = page.getByRole('link', { name: '进入 byrdocs.org' })
+    assert.equal(await byrdocs.getAttribute('href'), 'https://byrdocs.org/')
+    assert.equal(await byrdocs.getAttribute('target'), '_blank')
+    assert.match(await byrdocs.getAttribute('rel'), /noreferrer/)
+
+    await page.getByLabel('GitHub 仓库地址').fill(SOURCE_REPOSITORY.url)
+    await page.getByRole('button', { name: '添加仓库', exact: true }).click()
+    await page.waitForSelector('.repository-toggle')
+    assert.deepEqual(paths, [], '未展开前不遍历仓库目录')
+    await page.locator('.repository-toggle').click()
+    await page.getByRole('button', { name: '第一章', exact: true }).click()
+    await page.getByRole('button', { name: '作业', exact: true }).click()
+    await page.waitForSelector('.entry-button:has-text("练习 #1.pdf")')
+    assert.match(await page.locator('.directory-path').innerText(), /第一章\/作业/)
+
+    const downloadPromise = page.waitForEvent('download')
+    await page.getByRole('button', { name: /练习 #1\.pdf/ }).click()
+    const download = await downloadPromise
+    assert.equal(download.suggestedFilename(), '练习 #1.pdf')
+    assert.ok(readFileSync(await download.path()).equals(readFileSync(resolve('tests/browser/fixtures/sample.pdf'))))
+    assert.ok(credentials.every((item) => !item.authorization && !item.body?.sessionId && !item.body?.password))
+
+    await page.getByRole('button', { name: /课表/ }).click()
+    await page.getByRole('button', { name: /添加源/ }).click()
+    assert.match(await page.locator('.directory-path').innerText(), /第一章\/作业/)
+    await page.getByRole('button', { name: '返回上级' }).click()
+    await page.getByRole('button', { name: '返回上级' }).click()
+    assert.match(await page.locator('.directory-path').innerText(), /仓库根目录/)
+    assert.deepEqual(paths, ['', '第一章', '第一章/作业'], '返回上级和切页应使用已有目录缓存')
+    assert.equal(await page.getByRole('button', { name: '返回上级' }).isDisabled(), true)
+    await page.getByRole('button', { name: 'constructor', exact: true }).click()
+    await page.waitForFunction(() => document.querySelector('.repository .empty')?.textContent.includes('空的'))
+    assert.equal(paths.at(-1), 'constructor', '目录名称不能与缓存对象的内置属性冲突')
+    await page.getByRole('button', { name: '返回上级' }).click()
+
+    await page.getByLabel('GitHub 仓库地址').fill(SOURCE_REPOSITORY.url)
+    await page.getByRole('button', { name: '添加仓库', exact: true }).click()
+    await page.waitForSelector('.source-form [role="alert"]')
+    assert.match(await page.locator('.source-form [role="alert"]').innerText(), /已经添加/)
+    assert.equal(await page.locator('.repository').count(), 1)
+
+    await page.reload({ waitUntil: 'networkidle' })
+    await page.getByRole('button', { name: /添加源/ }).click()
+    assert.equal(await page.locator('.repository').count(), 1)
+    await page.getByRole('button', { name: '移除 teacher/homework' }).click()
+    assert.equal(await page.locator('.repository').count(), 0)
+    assert.deepEqual(await page.evaluate(() => JSON.parse(localStorage.getItem('bupt-week-github-sources-v1'))), [])
+  } finally {
+    await page.close()
+  }
+})
+
+test('添加源：限流可重试，下载失败展示服务端原因而不保存错误文件', async () => {
+  const page = await browser.newPage()
+  try {
+    await mockSources(page, { failDirectory: true, failDownload: true })
+    await page.goto(APP_ORIGIN, { waitUntil: 'networkidle' })
+    await page.getByRole('button', { name: /添加源/ }).click()
+    await page.getByLabel('GitHub 仓库地址').fill(SOURCE_REPOSITORY.url)
+    await page.getByRole('button', { name: '添加仓库', exact: true }).click()
+    await page.locator('.repository-toggle').click()
+    await page.waitForSelector('.repository [role="alert"]')
+    assert.match(await page.locator('.repository [role="alert"]').innerText(), /频率/)
+    await page.getByRole('button', { name: '重试', exact: true }).click()
+    await page.getByRole('button', { name: '第一章', exact: true }).click()
+    await page.getByRole('button', { name: '作业', exact: true }).click()
+    let downloaded = false
+    page.on('download', () => { downloaded = true })
+    await page.getByRole('button', { name: /练习 #1\.pdf/ }).click()
+    await page.waitForFunction(() => document.querySelector('.download-hint')?.textContent.includes('Git LFS'))
+    assert.equal(downloaded, false)
+    assert.equal(await page.getByRole('button', { name: /练习 #1\.pdf/ }).isDisabled(), false)
+  } finally {
+    await page.close()
+  }
+})
+
+test('添加源：窄屏亮暗主题没有横向溢出，非法本地仓库记录不生成外站链接', async () => {
+  const page = await browser.newPage({ viewport: { width: 320, height: 800 } })
+  try {
+    await page.addInitScript((repository) => {
+      localStorage.setItem('bupt-week-github-sources-v1', JSON.stringify([
+        repository,
+        { ...repository, url: 'javascript:alert(1)' },
+        { ...repository, owner: '../evil' },
+      ]))
+    }, SOURCE_REPOSITORY)
+    await mockSources(page)
+    await page.goto(APP_ORIGIN, { waitUntil: 'networkidle' })
+    await page.getByRole('button', { name: /添加源/ }).click()
+    assert.equal(await page.locator('.repository').count(), 1)
+    await page.locator('.repository-toggle').click()
+    await page.getByRole('button', { name: '第一章', exact: true }).click()
+    for (const mode of ['dark', 'light']) {
+      if (await page.locator('html').getAttribute('data-theme') !== mode) await page.locator('.theme-toggle').click()
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, `${mode} 窄屏不能横向溢出`)
+      const rectangles = await page.locator('.tabs button').evaluateAll((tabs) => tabs.map((tab) => {
+        const rect = tab.getBoundingClientRect()
+        return { width: rect.width, content: tab.scrollWidth, height: rect.height }
+      }))
+      assert.ok(rectangles.every((rect) => rect.height >= 44 && rect.content <= Math.ceil(rect.width)), '五个标签文字完整、触摸高度至少 44px')
+    }
+  } finally {
+    await page.close()
+  }
+})
