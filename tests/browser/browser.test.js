@@ -2353,6 +2353,103 @@ test('班级：确认完成移出未提交列表，刷新保留、按账号隔�
 
 // ── 添加源 ─────────────────────────────────────────────────────────────────
 
+const BYRDOCS_FILE = { key: `${'a'.repeat(32)}.pdf`, title: '概率论期末试题', filename: '概率论期末试题.pdf', type: 'test', size: 455, url: 'https://byrdocs.org/?q=test' }
+
+test('ByrDocs：本站登录后直接搜索下载，凭证不进前端存储，刷新后保留连接、退出后禁用下载', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.route('**/api/auth/login', (route) => fulfill(route, LOGIN_OK))
+    await page.route('**/api/ucloud/session', (route) => fulfill(route, UCLOUD_SESSION))
+    await page.route('**/api/jwgl/session', (route) => fulfill(route, { success: true, data: { sessionId: 'jw-sid', username: '2021001234', expiresAt: EXPIRES_AT } }))
+    await page.route('**/api/jwgl/timetable', mockTimetable)
+    await page.route('**/api/sources/byrdocs/status', (route) => fulfill(route, { success: true, data: { ready: true } }))
+    await page.route('**/api/sources/byrdocs/search', (route) => {
+      assert.deepEqual(route.request().postDataJSON(), { keyword: '概率论', type: 'test' })
+      return fulfill(route, { success: true, data: { results: [BYRDOCS_FILE] } })
+    })
+    let requestedDownload = false
+    await page.route('**/api/sources/byrdocs/download', (route) => {
+      const request = route.request()
+      assert.equal(request.method(), 'POST')
+      assert.equal(request.url().includes('sessionId'), false)
+      assert.deepEqual(request.postDataJSON(), { sessionId: 'uc-sid', key: BYRDOCS_FILE.key, filename: BYRDOCS_FILE.filename })
+      requestedDownload = true
+      return route.fulfill({ contentType: 'application/pdf', body: readFileSync(resolve('tests/browser/fixtures/sample.pdf')) })
+    })
+    await page.goto(APP_ORIGIN, { waitUntil: 'networkidle' })
+    await page.fill(`${panel} input[type="text"]`, '2021001234')
+    await page.fill(`${panel} input[type="password"]`, 'password-probe')
+    await page.click(`${panel} button[type="submit"]`)
+    await page.waitForFunction(() => document.querySelectorAll('.panel').length === 0)
+    await page.click('.tabs button:has-text("添加源")')
+    await page.getByText('已连接，可直接下载', { exact: true }).waitFor()
+    assert.equal(await page.locator('#byrdocs-password').count(), 0)
+    await page.getByLabel('资料关键词').fill('概率论')
+    await page.getByRole('button', { name: '搜索资料', exact: true }).click()
+    await page.getByText(BYRDOCS_FILE.title, { exact: true }).waitFor()
+    const downloadPromise = page.waitForEvent('download')
+    await page.locator('.byrdocs-results').getByRole('button', { name: '下载', exact: true }).click()
+    const download = await downloadPromise
+    assert.equal(download.suggestedFilename(), BYRDOCS_FILE.filename)
+    assert.ok(readFileSync(await download.path()).equals(readFileSync(resolve('tests/browser/fixtures/sample.pdf'))))
+    assert.equal(requestedDownload, true)
+    assert.equal(await page.evaluate(() => JSON.stringify(localStorage).includes('password-probe')), false)
+    assert.deepEqual(Object.keys(await page.evaluate(() => JSON.parse(localStorage.getItem('bupt-week-ucloud-auth')))).sort(), ['expiresAt', 'realName', 'sessionId', 'username'])
+    await page.reload({ waitUntil: 'networkidle' })
+    await page.click('.tabs button:has-text("添加源")')
+    await page.getByText('已连接，可直接下载', { exact: true }).waitFor()
+    await page.click('.topbar-auth button:has-text("退出")')
+    await page.getByText('登录后可连接下载', { exact: true }).waitFor()
+    assert.equal(await page.locator('#byrdocs-password').count(), 0)
+  } finally {
+    await page.close()
+  }
+})
+
+test('ByrDocs：旧会话补连、失败清空密码、下载凭证过期只断开 ByrDocs，窄屏明暗主题不溢出', async () => {
+  const page = await browser.newPage({ viewport: { width: 320, height: 800 } })
+  try {
+    await page.addInitScript((auth) => localStorage.setItem('bupt-week-ucloud-auth', JSON.stringify(auth)), STORED_UCLOUD)
+    await page.route('**/api/ucloud/session', (route) => fulfill(route, UCLOUD_SESSION))
+    let connected = false
+    let attempts = 0
+    await page.route('**/api/sources/byrdocs/status', (route) => fulfill(route, { success: true, data: { ready: connected } }))
+    await page.route('**/api/sources/byrdocs/connect', (route) => {
+      assert.equal(route.request().postDataJSON().sessionId, 'uc-sid')
+      attempts += 1
+      if (attempts === 1) return fulfill(route, { success: false, stage: 'byrdocs-auth', msg: 'BYR Docs 认证未通过，请检查统一身份认证密码' }, 401)
+      connected = true
+      return fulfill(route, { success: true, data: { ready: true } })
+    })
+    await page.route('**/api/sources/byrdocs/search', (route) => fulfill(route, { success: true, data: { results: [BYRDOCS_FILE] } }))
+    await page.route('**/api/sources/byrdocs/download', (route) => {
+      connected = false
+      return fulfill(route, { success: false, stage: 'byrdocs-auth', msg: 'BYR Docs 下载认证已失效，请重新连接；课表和作业不受影响' }, 401)
+    })
+    await page.goto(APP_ORIGIN, { waitUntil: 'networkidle' })
+    await page.click('.tabs button:has-text("添加源")')
+    await page.getByLabel('统一身份认证密码', { exact: true }).fill('wrong-probe')
+    await page.getByRole('button', { name: '连接 BYR Docs', exact: true }).click()
+    await page.getByText('BYR Docs 认证未通过，请检查统一身份认证密码', { exact: true }).waitFor()
+    assert.equal(await page.locator('#byrdocs-password').inputValue(), '')
+    await page.getByLabel('统一身份认证密码', { exact: true }).fill('correct-probe')
+    await page.getByRole('button', { name: '连接 BYR Docs', exact: true }).click()
+    await page.getByText('已连接，可直接下载', { exact: true }).waitFor()
+    await page.getByLabel('资料关键词').fill('概率论')
+    await page.getByRole('button', { name: '搜索资料', exact: true }).click()
+    await page.locator('.byrdocs-results').getByRole('button', { name: '下载', exact: true }).click()
+    await page.getByText('BYR Docs 下载认证已失效，请重新连接；课表和作业不受影响', { exact: true }).waitFor()
+    await page.locator('#byrdocs-password').waitFor()
+    assert.ok(await page.evaluate(() => JSON.parse(localStorage.getItem('bupt-week-ucloud-auth')).sessionId))
+    for (const mode of ['light', 'dark']) {
+      if (await page.locator('html').getAttribute('data-theme') !== mode) await page.locator('.theme-toggle').click()
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, mode)
+    }
+  } finally {
+    await page.close()
+  }
+})
+
 const SOURCE_REPOSITORY = { owner: 'teacher', repo: 'homework', ref: 'course/main', url: 'https://github.com/teacher/homework' }
 
 async function mockSources(page, { failDirectory = false, failDownload = false } = {}) {

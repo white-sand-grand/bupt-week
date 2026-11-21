@@ -6,6 +6,7 @@ import { createApiRoutes } from './routes/api.js'
 import { createAuthRoutes } from './routes/auth.js'
 import { createClassesRoutes } from './routes/classes.js'
 import { createSourcesRoutes } from './routes/sources.js'
+import { createByrdocsRoutes } from './routes/byrdocs.js'
 
 /**
  * 后端应用工厂。
@@ -37,6 +38,7 @@ export function createBackend({ getSessionStore = null, getClassStore = null, al
 
   // 业务接口与会话都依赖存储，没注入就不挂——而不是挂上去每次都 401。
   if (getSessionStore) {
+    app.route('/api/sources/byrdocs', createByrdocsRoutes({ getSessionStore }))
     app.route('/api', createApiRoutes({ getSessionStore }))
     app.route('/api', createAuthRoutes({ getSessionStore, frontendUrl, allowedOrigins }))
     if (getClassStore) {

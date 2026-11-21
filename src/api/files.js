@@ -38,9 +38,12 @@ export async function resolveResourceDownload(sessionId, resourceId) {
  *   onProgress 在传了且浏览器支持流式读取时逐块回调；total 取自 Content-Length，
  *   代理或上游没给（chunked）时是 null，调用方按「只知道已下载多少」展示。
  */
-export async function downloadFile(fileUrl, filename, { onProgress, signal } = {}) {
+export async function downloadFile(fileUrl, filename, { onProgress, signal, body } = {}) {
   // 下载路径同样要拼上后端地址，兼容 Pages + Workers 跨域部署。
-  const response = await fetch(backendUrl(fileUrl), { signal })
+  const response = await fetch(backendUrl(fileUrl), {
+    signal,
+    ...(body === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }),
+  })
   if (!response.ok) {
     if (fileUrl.startsWith('/api/sources/')) {
       const payload = await response.json().catch(() => null)

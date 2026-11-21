@@ -34,13 +34,14 @@ function remove(id) {
  * 下载；失败后再点即重试。
  * GitHub 文件传入独立的状态键和 fileUrl，共用进度显示，无需学校会话。
  */
-async function start(resourceId, filename, fileUrl = '') {
+async function start(resourceId, filename, fileUrl = '', body) {
   const current = items.value[resourceId]
   if (current && (current.phase === 'resolving' || current.phase === 'downloading')) return
 
   patch(resourceId, { phase: 'resolving', received: 0, total: null, message: '' })
   try {
     const options = {
+      body,
       onProgress({ received, total }) {
         patch(resourceId, { phase: 'downloading', received, total })
       },

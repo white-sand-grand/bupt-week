@@ -5,6 +5,7 @@ import { downloadsStore } from '../composables/downloads.js'
 import { githubDownloadPath } from '../api/sources.js'
 import { formatBytes } from '../utils/format.js'
 import { friendlyError } from '../utils/errors.js'
+import ByrdocsSource from '../components/ByrdocsSource.vue'
 
 const url = ref('')
 const busy = ref(false)
@@ -134,14 +135,7 @@ function goBack(repository) {
       </div>
     </article>
 
-    <aside class="preset-source" aria-labelledby="byrdocs-title">
-      <div>
-        <h3 id="byrdocs-title">BYR Docs</h3>
-        <p class="note">北邮学习资料与往年试题。可在官网使用北邮统一身份认证账号登录，下载以官网的登录和网络要求为准。</p>
-        <p class="note">本站登录状态不能直接用于 BYR Docs，请在官网完成认证。</p>
-      </div>
-      <a class="text-button preset-link" href="https://byrdocs.org/" target="_blank" rel="noopener noreferrer">进入 byrdocs.org ↗</a>
-    </aside>
+    <ByrdocsSource />
   </section>
 </template>
 
@@ -418,34 +412,7 @@ button:disabled {
   cursor: default;
 }
 
-h3 {
-  margin: 0 0 0.375rem;
-  font-size: 1rem;
-}
-
-.preset-source {
-  display: flex;
-  align-items: center;
-  gap: 1rem;
-  padding: 1rem 0;
-  border-top: 1px solid var(--line);
-}
-
-.preset-source > div {
-  flex: 1;
-}
-
-.preset-link {
-  flex-shrink: 0;
-}
-
 @media (max-width: 30rem) {
-  .preset-source {
-    align-items: flex-start;
-    flex-direction: column;
-    gap: 0.5rem;
-  }
-
   .input-row {
     gap: 0.5rem;
   }

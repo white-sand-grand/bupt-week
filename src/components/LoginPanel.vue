@@ -40,6 +40,7 @@ async function submit() {
     <p class="hint">
       课表和作业共用同一套统一身份认证，<strong>登录一次即可</strong>。
       不登录也能浏览页面，只是没有数据。
+      学号密码登录时也会尝试连接 BYR Docs，方便在本站下载资料。
     </p>
 
     <div v-if="auth.loggedIn.value" class="logged-in">

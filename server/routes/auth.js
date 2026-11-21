@@ -7,6 +7,7 @@ import { loginJwglweixin, validateWeixinSession } from '../services/jwglweixin.j
 import { createLoginRateLimiter, createRequestRateLimiter } from '../rate-limit.js'
 import { deleteSessionIfUnchanged } from '../session-guard.js'
 import { withUserAgent } from '../user-agent.js'
+import { byrdocsSessionKey, loginByrdocs, saveByrdocsSession } from '../services/byrdocs.js'
 
 // 服务端会话 7 天；探活/业务成功时滑动续期，30 天绝对上限。
 // 上游会话可能提前失效，届时提示重新登录即可。
@@ -182,6 +183,14 @@ export function createAuthRoutes({ getSessionStore, frontendUrl = '', allowedOri
 
     const store = getSessionStore()
     const ucloudSessionId = newSessionId()
+    // 独立服务失败不阻断学校登录；密码仍只在这次请求的内存中使用。
+    let byrdocsToken = ''
+    let byrdocsMessage = ''
+    try {
+      byrdocsToken = await loginByrdocs({ username, password })
+    } catch {
+      byrdocsMessage = 'BYR Docs 暂未连接，可在添加源页补充连接；课表和作业不受影响'
+    }
 
     await store.set(ucloudSessionId, {
       kind: 'ucloud',
@@ -189,6 +198,7 @@ export function createAuthRoutes({ getSessionStore, frontendUrl = '', allowedOri
       createdAt: Date.now(),
       expiresAt: expiresAt(),
     })
+    if (byrdocsToken) await saveByrdocsSession(store, ucloudSessionId, byrdocsToken)
 
     // 教务侧降级（jwgl 为 null）时不建会话。凭证形态按数据源分两种：
     // jwglweixin（token）/ jwgl（Cookie 罐），消费方按 kind 分流。
@@ -212,6 +222,7 @@ export function createAuthRoutes({ getSessionStore, frontendUrl = '', allowedOri
         jwgl: jwgl ? { sessionId: jwglSessionId, username } : null,
         // 方便排查：移动教务 / 教务处 CAS / 老登录 / 全部不可达
         jwglVia,
+        byrdocs: { ready: Boolean(byrdocsToken), message: byrdocsMessage },
         ...(jwglMessage ? { jwglMessage } : {}),
         ...(jwglPasswordNeeded ? { jwglPasswordNeeded } : {}),
         expiresAt: expiresAt(),
@@ -273,7 +284,10 @@ export function createAuthRoutes({ getSessionStore, frontendUrl = '', allowedOri
     // 匿名删键接口——Node 入口下班级数据（class:*/code:*/user:*）与会话
     // 同库，会被整键抹掉。删不存在的键保持幂等成功。
     const session = typeof sessionId === 'string' ? await store.get(sessionId) : null
-    if (session?.kind === 'ucloud') await store.delete(sessionId)
+    if (session?.kind === 'ucloud') {
+      await store.delete(sessionId)
+      await store.delete(byrdocsSessionKey(sessionId))
+    }
     return c.json({ success: true })
   })
 

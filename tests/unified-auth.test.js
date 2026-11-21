@@ -6,6 +6,35 @@ import { MemorySessionStore } from '../server/storage/memory.js'
 const CAS_PAGE = '<input type="hidden" name="execution" value="e1s2e3" />'
 const TTL = 7 * 86400000
 
+test('统一登录自动连接 ByrDocs：派生凭证只存后端，独立服务失败不影响学校登录', async (t) => {
+  const token = `header.${btoa(JSON.stringify({ id: 'BUPT-2021001234', download: true }))}.signature`
+  for (const available of [true, false]) {
+    const { app, store } = makeApp()
+    const school = fakeUpstream({ jwglweixin: 'ok' })
+    const upstream = t.mock.method(globalThis, 'fetch', async (url, options) => {
+      if (String(url).startsWith('https://byrdocs.org/')) {
+        if (!available) throw new TypeError('Byrdocs unavailable')
+        if (String(url).endsWith('/bupt_login')) {
+          assert.equal(JSON.parse(options.body).password, 'password-probe')
+          return json({ success: true, token })
+        }
+        return json({ success: true, loginURL: 'https://byrdocs.org/auth/12345678-1234-4234-8234-123456789abc/byrdocs-cli' })
+      }
+      return school(url, options)
+    })
+    const response = await post(app, '/api/auth/login', { username: '2021001234', password: 'password-probe' })
+    const body = await response.json()
+    assert.equal(response.status, 200)
+    assert.equal(body.data.byrdocs.ready, available)
+    assert.ok(body.data.ucloud.sessionId)
+    assert.ok(body.data.jwgl.sessionId)
+    assert.equal(JSON.stringify(body).includes(token), false)
+    assert.equal(JSON.stringify([...store.map.entries()]).includes('password-probe'), false)
+    assert.equal(Boolean(await store.get(`byrdocs:${body.data.ucloud.sessionId}`)), available)
+    upstream.mock.restore()
+  }
+})
+
 function json(body, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
 }
