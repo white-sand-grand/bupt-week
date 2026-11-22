@@ -1967,13 +1967,17 @@ const COURSEWARE_TREE = [
 ]
 
 test('课件：选课程 → 一页铺开多份资料 → 点文件名下载落盘（文件名是课件名）', async () => {
-  const page = await browser.newPage()
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } })
   try {
     await page.route('**/api/auth/login', (route) => fulfill(route, LOGIN_OK))
     await page.route('**/api/jwgl/session', (route) => fulfill(route, { success: true, data: { sessionId: 'jw-sid', username: '2021001234', expiresAt: EXPIRES_AT } }))
     await page.route('**/api/ucloud/session', (route) => fulfill(route, UCLOUD_SESSION))
     await page.route('**/api/ucloud/courses', (route) =>
-      fulfill(route, { success: true, data: { courses: [{ id: 'site-1', name: '高等数学' }, { id: 'site-2', name: '大学物理' }] } }),
+      fulfill(route, { success: true, data: { courses: [
+        { id: 'site-1', name: '高等数学', teacher: '张老师、李老师' },
+        { id: 'site-2', name: '大学物理', teacher: '' },
+        { id: 'site-3', name: '可再生能源与低碳社会（在线课程）', teacher: '王老师' },
+      ] } }),
     )
     await page.route('**/api/ucloud/courseware', (route) => {
       const { siteId } = route.request().postDataJSON()
@@ -2001,9 +2005,14 @@ test('课件：选课程 → 一页铺开多份资料 → 点文件名下载落�
     await page.click('.tabs button:has-text("课件")')
     assert.equal(await page.textContent('.view h2'), '课件')
 
-    // 课程 chips 渲染，默认选第一门；资料一页铺开：目录行 + 两份文件 + 链接
-    await page.waitForFunction(() => document.querySelector('.chip-active')?.textContent === '高等数学')
+    // 课程卡片带教师姓名；桌面左右分栏，默认选第一门。
+    await page.waitForFunction(() => document.querySelector('.chip-active .course-name')?.textContent === '高等数学')
     assert.match(await page.textContent('.course-chips'), /大学物理/)
+    assert.match(await page.textContent('.chip-active .course-teacher'), /张老师、李老师/)
+    assert.match(await page.textContent('.files-head'), /高等数学.*任课老师：张老师、李老师/s)
+    const sidebar = await page.locator('.course-sidebar').boundingBox()
+    const files = await page.getByRole('tabpanel').boundingBox()
+    assert.ok(sidebar.x + sidebar.width < files.x, '课程在左，课件在右')
     await page.waitForFunction(() => document.querySelector('.resource-list')?.textContent.includes('习题答案.pdf'))
 
     const listText = await page.textContent('.resource-list')
@@ -2025,6 +2034,27 @@ test('课件：选课程 → 一页铺开多份资料 → 点文件名下载落�
     // 换一门没有资料的课：空态文案
     await page.click('.chip:has-text("大学物理")')
     await page.waitForFunction(() => document.querySelector('.view .empty')?.textContent.includes('还没有上传过课件'))
+    assert.match(await page.textContent('.chip-active'), /任课老师：暂未提供/)
+    assert.match(await page.textContent('.files-head h3'), /大学物理/)
+
+    // 纵向课程列表支持方向键切换，Tab 只停留在所选课程。
+    await page.getByRole('tab', { name: /大学物理/ }).press('ArrowDown')
+    await page.waitForFunction(() => document.querySelector('.files-head h3')?.textContent.includes('可再生能源'))
+    assert.equal(await page.getByRole('tab', { selected: true }).evaluate((el) => el === document.activeElement), true)
+    assert.equal(await page.locator('.course-chips [tabindex="0"]').count(), 1)
+    await page.getByRole('tab', { selected: true }).press('Home')
+    await page.waitForSelector('.resource-list')
+
+    // 手机上下排列、长课程名完整换行；明暗主题均无横向溢出。
+    await page.setViewportSize({ width: 390, height: 844 })
+    const mobileSidebar = await page.locator('.course-sidebar').boundingBox()
+    const mobileFiles = await page.getByRole('tabpanel').boundingBox()
+    assert.ok(mobileSidebar.y + mobileSidebar.height <= mobileFiles.y)
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true)
+    await page.locator('.theme-toggle').click()
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true)
+    await page.getByRole('tab', { name: /可再生能源/ }).click()
+    assert.match(await page.textContent('.files-head h3'), /可再生能源与低碳社会（在线课程）/)
   } finally {
     await page.close()
   }

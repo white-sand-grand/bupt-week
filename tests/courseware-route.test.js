@@ -24,7 +24,7 @@ function mockUpstream(t, handler) {
   t.mock.method(globalThis, 'fetch', handler)
 }
 
-test('POST /api/ucloud/courses：返回课程列表', async (t) => {
+test('POST /api/ucloud/courses：返回课程与教师姓名，兼容多教师、缺失和旧字段', async (t) => {
   const { app, store } = makeApp()
   await seedSession(store)
 
@@ -33,7 +33,12 @@ test('POST /api/ucloud/courses：返回课程列表', async (t) => {
       JSON.stringify({
         code: 200,
         success: true,
-        data: { records: [{ id: 101, siteName: '高等数学' }, { id: 102, siteName: '大学物理' }] },
+        data: { records: [
+          { id: 101, siteName: '高等数学', teachers: [{ realName: ' 张老师 ' }, { name: '李老师' }, { realName: '张老师' }, null, { account: 'private-account' }] },
+          { id: 102, siteName: '大学物理', teachers: [], primaryTeachers: ' 王老师 ' },
+          { id: 103, siteName: '设计思维' },
+          { id: 104, siteName: '网络课程', teachers: 'invalid', primaryTeachers: null },
+        ] },
       }),
       { headers: { 'Content-Type': 'application/json' } },
     ),
@@ -48,8 +53,10 @@ test('POST /api/ucloud/courses：返回课程列表', async (t) => {
   assert.equal(response.status, 200)
   const body = await response.json()
   assert.deepEqual(body.data.courses, [
-    { id: '101', name: '高等数学' },
-    { id: '102', name: '大学物理' },
+    { id: '101', name: '高等数学', teacher: '张老师、李老师' },
+    { id: '102', name: '大学物理', teacher: '王老师' },
+    { id: '103', name: '设计思维', teacher: '' },
+    { id: '104', name: '网络课程', teacher: '' },
   ])
 })
 

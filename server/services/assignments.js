@@ -70,7 +70,7 @@ export async function listAssignments({ token, fetchImpl = fetch }) {
 }
 
 /**
- * 课程列表（§2.2）。返回 [{ id, name }]，size=9999 一次拉全避免分页。
+ * 课程列表（§2.2）。返回 [{ id, name, teacher }]，size=9999 一次拉全避免分页。
  * 课件视图也要用（选课 → 拉该课的资料树），所以导出。
  */
 export async function listCourses({ token, userId, fetchImpl = fetch }) {
@@ -82,7 +82,19 @@ export async function listCourses({ token, userId, fetchImpl = fetch }) {
   )
   const records = Array.isArray(body?.data?.records) ? body.data.records : []
   return records
-    .map((course) => ({ id: String(course.id ?? ''), name: course.siteName || course.name || '' }))
+    .map((course) => {
+      // 云邮 teachers / primaryTeachers 的读取方式与参考实现 MYUCLOUD 一致。
+      const teachers = Array.isArray(course.teachers) ? course.teachers : []
+      const names = teachers.map((teacher) => teacher?.realName || teacher?.name)
+        .filter((name) => typeof name === 'string' && name.trim())
+        .map((name) => name.trim())
+      return {
+        id: String(course.id ?? ''),
+        name: course.siteName || course.name || '',
+        teacher: [...new Set(names)].join('、')
+          || (typeof course.primaryTeachers === 'string' ? course.primaryTeachers.trim() : ''),
+      }
+    })
     .filter((course) => course.id && course.name)
 }
 

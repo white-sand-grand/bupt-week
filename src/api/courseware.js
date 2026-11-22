@@ -1,6 +1,6 @@
 import { api } from './client.js'
 
-/** 课程列表：课件视图的选课 chips。返回 [{ id, name }]。 */
+/** 课程列表：课件视图的课程卡片。返回 [{ id, name, teacher }]。 */
 export async function fetchCourses(sessionId) {
   const { courses } = await api('/api/ucloud/courses', {
     method: 'POST',
