@@ -26,6 +26,7 @@ dist/
 # 自托管指南，必须保留公开。
 docs/*
 !docs/deployment.md
+!docs/agent-api.md
 
 # AI 助手的内部说明
 CLAUDE.md

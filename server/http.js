@@ -9,7 +9,11 @@ export class ApiError extends Error {
     this.name = 'ApiError'
     this.status = status
     this.stage = detail.stage
-    this.body = { success: false, msg: this.message, ...(detail.stage ? { stage: detail.stage } : {}) }
+    this.body = { success: false, msg: this.message,
+      ...(detail.stage ? { stage: detail.stage } : {}),
+      ...(typeof detail.code === 'string' ? { code: detail.code } : {}),
+      ...(Number.isFinite(detail.retryAfter) ? { retryAfter: detail.retryAfter } : {}),
+    }
   }
 }
 

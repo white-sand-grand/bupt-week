@@ -23,13 +23,14 @@ const ALLOWED_HEADERS = 'Content-Type'
  * @param {string[]} allowedOrigins 配置允许的来源
  * @returns {Record<string, string>} 不允许时返回空对象
  */
-export function corsHeadersFor(origin, allowedOrigins = []) {
+export function corsHeadersFor(origin, allowedOrigins = [], agent = false) {
   if (!origin || !allowedOrigins.includes(origin)) return {}
 
   return {
     'Access-Control-Allow-Origin': origin,
     'Access-Control-Allow-Methods': ALLOWED_METHODS,
-    'Access-Control-Allow-Headers': ALLOWED_HEADERS,
+    'Access-Control-Allow-Headers': agent ? `${ALLOWED_HEADERS}, Authorization, Idempotency-Key` : ALLOWED_HEADERS,
+    ...(agent ? { 'Access-Control-Expose-Headers': 'Retry-After' } : {}),
     'Access-Control-Max-Age': '86400',
     Vary: 'Origin',
   }
@@ -38,7 +39,7 @@ export function corsHeadersFor(origin, allowedOrigins = []) {
 export function backendCors(allowedOrigins = []) {
   return async (c, next) => {
     for (const [name, value] of Object.entries(
-      corsHeadersFor(c.req.header('Origin') || '', allowedOrigins),
+      corsHeadersFor(c.req.header('Origin') || '', allowedOrigins, c.req.path.startsWith('/api/agent/v1/')),
     )) {
       c.header(name, value)
     }

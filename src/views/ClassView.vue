@@ -1,4 +1,5 @@
 <script setup>
+import AgentAccess from '../components/AgentAccess.vue'
 import { computed, onMounted, ref, watch } from 'vue'
 import { auth } from '../composables/auth.js'
 import { classesStore } from '../composables/classes.js'
@@ -168,6 +169,8 @@ watch(() => auth.ucloudReady.value, startLoad)
         {{ classesStore.classes.value.length }} 个班级
       </span>
     </header>
+
+    <AgentAccess />
 
     <div v-if="auth.ucloudReady.value && classesStore.state.value === 'error'" class="notice notice-error" role="alert">
       <span class="notice-text">班级信息获取失败：{{ classesStore.error.value }}</span>
@@ -353,7 +356,7 @@ watch(() => auth.ucloudReady.value, startLoad)
             <span class="assignment-deadline" :class="{ 'deadline-near': assignment.level === 'danger' || assignment.level === 'overdue' }">
               {{ deadlineLabel(assignment) }}
             </span>
-            <span class="assignment-by">录入：{{ assignment.createdBy || '同学' }}</span>
+            <span class="assignment-by">{{ assignment.createdVia === 'agent' ? `由 ${assignment.automationName || 'Agent'} 录入` : `录入：${assignment.createdBy || '同学'}` }}</span>
             <button
               v-if="classesStore.canDelete(assignment)"
               class="delete-button"

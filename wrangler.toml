@@ -2,6 +2,14 @@ name = "bupt-week"
 main = "server/entries/worker.js"
 compatibility_date = "2025-01-01"
 
+[[durable_objects.bindings]]
+name = "BUSINESS"
+class_name = "BusinessObject"
+
+[[migrations]]
+tag = "business-v1"
+new_sqlite_classes = ["BusinessObject"]
+
 # 本项目的 server/ 只使用 Web 标准 API（fetch / Headers / crypto.randomUUID），
 # 不引入 node:fs，因此不需要 nodejs_compat。
 # 会话存储通过 app.js 的 getSessionStore 注入，这里注入 KV 实现。
@@ -14,8 +22,7 @@ CORS_ORIGINS = "https://white-sand-grand.github.io"
 # 回流会落在 Pages 根 404，表现为「企微识别失败」（2026-10-24 实测根因）。
 FRONTEND_URL = "https://white-sand-grand.github.io/bupt-week"
 
-# 班级功能数据（班级/成员/手动录入的作业）。与 SESSIONS 分开建 namespace，
-# 避免会话清理逻辑（按 expiresAt 判活）误伤班级数据。
+# 旧班级数据：BUSINESS 按需只读迁入。保留绑定与备份，不再向此 namespace 写入。
 [[kv_namespaces]]
 binding = "CLASSES"
 id = "caf63daeb019431c923418f19e9addb7"

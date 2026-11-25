@@ -7,6 +7,8 @@ import { createAuthRoutes } from './routes/auth.js'
 import { createClassesRoutes } from './routes/classes.js'
 import { createSourcesRoutes } from './routes/sources.js'
 import { createByrdocsRoutes } from './routes/byrdocs.js'
+import { createAgentRoutes } from './routes/agent.js'
+import { BusinessService } from './services/business.js'
 
 /**
  * 后端应用工厂。
@@ -16,8 +18,9 @@ import { createByrdocsRoutes } from './routes/byrdocs.js'
  *
  * @param {{ getSessionStore?: object, getClassStore?: object, allowedOrigins?: string[], frontendUrl?: string }} options
  */
-export function createBackend({ getSessionStore = null, getClassStore = null, allowedOrigins = [], frontendUrl = '' } = {}) {
+export function createBackend({ getSessionStore = null, getClassStore = null, getBusinessService = null, allowedOrigins = [], frontendUrl = '' } = {}) {
   const app = new Hono()
+  const business = getBusinessService || (getClassStore ? () => new BusinessService(getClassStore()) : null)
 
   app.use('*', backendCors(allowedOrigins))
   app.use('/api/*', async (c, next) => {
@@ -41,16 +44,28 @@ export function createBackend({ getSessionStore = null, getClassStore = null, al
     app.route('/api/sources/byrdocs', createByrdocsRoutes({ getSessionStore }))
     app.route('/api', createApiRoutes({ getSessionStore }))
     app.route('/api', createAuthRoutes({ getSessionStore, frontendUrl, allowedOrigins }))
-    if (getClassStore) {
-      app.route('/api', createClassesRoutes({ getSessionStore, getClassStore }))
+    if (business) {
+      app.route('/api', createClassesRoutes({ getSessionStore, getBusinessService: business }))
+      app.route('/api/agent', createAgentRoutes({ getSessionStore, getBusinessService: business }))
     }
   }
 
   mountProxyRoutes(app, { allowedOrigins })
 
-  app.notFound((c) => c.json({ success: false, msg: '接口不存在' }, 404))
+  app.notFound((c) => c.json({ success: false, msg: '接口不存在',
+    ...(c.req.path.startsWith('/api/agent/v1/') ? { code: 'RESOURCE_NOT_FOUND' } : {}),
+  }, 404))
   app.onError((error, c) => {
-    if (error instanceof ApiError) return c.json(error.body, error.status)
+    if (error instanceof ApiError) {
+      const body = { ...error.body }
+      if (c.req.path.startsWith('/api/agent/v1/')) {
+        body.code ||= ({ 400: 'INVALID_INPUT', 401: 'INVALID_API_KEY', 403: 'INSUFFICIENT_SCOPE', 404: 'RESOURCE_NOT_FOUND',
+          409: 'IDEMPOTENCY_CONFLICT', 413: 'BODY_TOO_LARGE', 429: 'RATE_LIMITED', 502: 'UPSTREAM_UNAVAILABLE', 503: 'TEMPORARILY_UNAVAILABLE' })[error.status] || 'INTERNAL_ERROR'
+        if (error.status === 429) body.retryAfter ||= 60
+      }
+      if (body.retryAfter) c.header('Retry-After', String(body.retryAfter))
+      return c.json(body, error.status)
+    }
     // 未知异常的 message 可能带内部细节（堆栈、上游地址），只进日志不进响应。
     console.error('[backend] 未处理的错误', error)
     return c.json({ success: false, msg: '服务器内部错误，请稍后再试' }, 500)

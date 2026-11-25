@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { access, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { isLive } from './is-live.js'
+import { businessRecords } from './business-records.js'
 
 /**
  * Node 单实例文件存储：每个键一个文件，异步原子替换，不随全库大小放大写入。
@@ -111,4 +112,35 @@ export class FileSessionStore {
       }
     })
   }
+}
+
+/**
+ * 小规模单实例的班级事务：业务键单独存为一个原子快照，学校会话不在其中。
+ * 旧班级键按需从原会话目录迁入；墓碑随快照持久化，删除后重启不复活。
+ * 同一目录只能由一个进程使用，与 FileSessionStore 的部署约束一致。
+ */
+export class FileBusinessStore {
+  constructor(file = resolve('.business.local'), legacy = new FileSessionStore()) {
+    this.files = new FileSessionStore(file)
+    this.legacy = legacy
+  }
+
+  transaction(operation) {
+    return this.files.run('business', async (file) => {
+      let entries = []
+      try {
+        entries = JSON.parse(await readFile(file, 'utf8'))
+      } catch (error) {
+        if (error.code !== 'ENOENT') throw error
+      }
+      const records = new Map(entries)
+      const result = await operation(businessRecords(records, (key) => this.legacy.get(key)))
+      await this.files.write(file, JSON.stringify([...records]))
+      return result
+    })
+  }
+
+  get(key) { return this.transaction((store) => store.get(key)) }
+  set(key, value) { return this.transaction((store) => store.set(key, value)) }
+  delete(key) { return this.transaction((store) => store.delete(key)) }
 }

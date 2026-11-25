@@ -29,3 +29,15 @@ export function deleteClassAssignment(sessionId, classId, assignmentId) {
 export function dissolveClass(sessionId, classId) {
   return api('/api/classes/dissolve', { method: 'POST', body: { sessionId, classId } })
 }
+
+export function fetchClassSources(sessionId, classId) {
+  return api('/api/classes/sources', { method: 'POST', body: { sessionId, classId } })
+}
+
+export function addClassSource(sessionId, classId, payload) {
+  return api('/api/classes/source/add', { method: 'POST', body: { sessionId, classId, ...payload } })
+}
+
+export function removeClassSource(sessionId, classId, sourceId) {
+  return api('/api/classes/source/remove', { method: 'POST', body: { sessionId, classId, sourceId } })
+}

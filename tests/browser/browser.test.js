@@ -2383,6 +2383,95 @@ test('班级：确认完成移出未提交列表，刷新保留、按账号隔�
 
 // ── 添加源 ─────────────────────────────────────────────────────────────────
 
+async function agentBrowserFixture(page) {
+  const sessions = new MemorySessionStore()
+  const records = new MemorySessionStore()
+  await sessions.set('uc-sid', { kind: 'ucloud', username: STORED_UCLOUD.username, expiresAt: EXPIRES_AT })
+  const app = createBackend({ getSessionStore: () => sessions, getClassStore: () => records })
+  async function post(path, input = {}) {
+    const response = await app.request(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionId: 'uc-sid', ...input }) })
+    assert.equal(response.status, 200)
+    return (await response.json()).data
+  }
+  const cls = await post('/api/classes/create', { name: 'Agent 测试班', password: 'class-test-pass' })
+  const proxy = async (route) => {
+    const request = route.request()
+    const response = await app.request(new URL(request.url()).pathname, { method: request.method(),
+      headers: request.headers(), ...(request.method() === 'GET' ? {} : { body: request.postData() }) })
+    await route.fulfill({ status: response.status, headers: Object.fromEntries(response.headers), body: await response.text() })
+  }
+  await page.route('**/api/classes/**', proxy)
+  await page.route('**/api/agent/**', proxy)
+  await page.route('**/api/ucloud/session', (route) => fulfill(route, UCLOUD_SESSION))
+  await page.route('**/api/ucloud/logout', (route) => fulfill(route, { success: true }))
+  await page.route('**/api/sources/byrdocs/status', (route) => fulfill(route, { success: true, data: { ready: false } }))
+  await page.addInitScript((auth) => localStorage.setItem('bupt-week-ucloud-auth', JSON.stringify(auth)), STORED_UCLOUD)
+  return { app, records, cls, post }
+}
+
+test('Agent 接入：实际生成 Key、关闭后不再显示、不进浏览器存储，网页撤销立即生效', async () => {
+  const page = await browser.newPage({ viewport: { width: 320, height: 800 } })
+  try {
+    const { app } = await agentBrowserFixture(page)
+    await page.goto(APP_ORIGIN, { waitUntil: 'networkidle' })
+    await page.locator('.tabs button:has-text("班级")').click()
+    await page.locator('.class-card').waitFor()
+    await page.getByRole('button', { name: /^Agent 接入/ }).click()
+    await page.getByRole('button', { name: '生成 Agent Key', exact: true }).click()
+    const result = page.getByLabel('新生成的 Agent Key（只显示这一次）')
+    await result.waitFor()
+    const key = await result.inputValue()
+    assert.ok(key.startsWith('bwk_'))
+    assert.equal(await page.evaluate((secret) => JSON.stringify({ ...localStorage, ...sessionStorage }).includes(secret), key), false)
+    await page.getByRole('button', { name: /^Agent 接入/ }).click()
+    await page.getByRole('button', { name: /^Agent 接入/ }).click()
+    assert.equal(await result.count(), 0)
+    await page.getByRole('button', { name: '撤销 我的作业助手', exact: true }).waitFor()
+    for (const mode of ['dark', 'light']) {
+      if (await page.locator('html').getAttribute('data-theme') !== mode) await page.locator('.theme-toggle').click()
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, `${mode} 授权表单不能溢出`)
+    }
+    await page.getByRole('button', { name: '撤销 我的作业助手', exact: true }).click()
+    await page.getByText('暂无有效授权。', { exact: true }).waitFor()
+    const denied = await app.request('/api/agent/v1/me', { headers: { Authorization: `Bearer ${key}` } })
+    assert.equal(denied.status, 401)
+    assert.equal(await page.locator('.agent-access input[type=password]').count(), 0)
+  } finally { await page.close() }
+})
+
+test('班级资料源：Agent 写入后刷新可见，网页可添加、移除；退出清空共享数据并保留本机列表', async () => {
+  const page = await browser.newPage({ viewport: { width: 320, height: 800 } })
+  try {
+    const { app, cls, post } = await agentBrowserFixture(page)
+    await page.addInitScript(() => localStorage.setItem('bupt-week-github-sources-v1', JSON.stringify([
+      { owner: 'teacher', repo: 'local-only', ref: 'main', url: 'https://github.com/teacher/local-only' },
+    ])))
+    await page.goto(APP_ORIGIN, { waitUntil: 'networkidle' })
+    await page.locator('.tabs button:has-text("添加源")').click()
+    await page.getByRole('button', { name: '添加到班级', exact: true }).waitFor()
+    const { key } = await post('/api/agent/keys/create', { name: '资料助手', classIds: [cls.classId], scopes: ['sources:create'] })
+    const saved = await app.request(`/api/agent/v1/classes/${cls.classId}/sources`, { method: 'POST',
+      headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', 'Idempotency-Key': 'browser-source' },
+      body: JSON.stringify({ type: 'link', url: 'https://example.org/lecture', name: '老师的课程主页' }) })
+    assert.equal(saved.status, 201)
+    await page.getByRole('button', { name: '刷新班级资料源', exact: true }).click()
+    await page.getByRole('link', { name: '老师的课程主页 ↗', exact: true }).waitFor()
+    await page.getByLabel('资料源类型', { exact: true }).selectOption('link')
+    await page.getByLabel('资料源名称（可选）', { exact: true }).fill('补充阅读')
+    await page.getByLabel('资料源地址', { exact: true }).fill('https://example.org/reading')
+    await page.getByRole('button', { name: '添加到班级', exact: true }).click()
+    await page.getByRole('link', { name: '补充阅读 ↗', exact: true }).waitFor()
+    await page.getByRole('button', { name: '移除 补充阅读', exact: true }).click()
+    await page.getByRole('link', { name: '补充阅读 ↗', exact: true }).waitFor({ state: 'detached' })
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true)
+    assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem('bupt-week-github-sources-v1')).length), 1)
+    await page.locator('.topbar-auth').getByRole('button', { name: '退出', exact: true }).click()
+    await page.locator('.shared-sources').waitFor({ state: 'detached' })
+    assert.equal(await page.getByRole('link', { name: '老师的课程主页 ↗', exact: true }).count(), 0)
+    assert.equal(await page.locator('.repository').count(), 1)
+  } finally { await page.close() }
+})
+
 const BYRDOCS_FILE = { key: `${'a'.repeat(32)}.pdf`, title: '概率论期末试题', filename: '概率论期末试题.pdf', type: 'test', size: 455, url: 'https://byrdocs.org/?q=test' }
 
 test('ByrDocs：本站登录后直接搜索下载，凭证不进前端存储，刷新后保留连接、退出后禁用下载', async () => {

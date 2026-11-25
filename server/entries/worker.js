@@ -1,6 +1,8 @@
 import { createBackend } from '../app.js'
 import { MemorySessionStore } from '../storage/memory.js'
 import { KvSessionStore } from '../storage/kv.js'
+import { DurableBusinessClient } from '../storage/durable-business.js'
+export { BusinessObject } from '../storage/durable-business.js'
 
 // 模块级缓存：同一 isolate 内的多个请求复用同一个应用实例与存储。
 let cachedApp
@@ -40,8 +42,8 @@ export default {
     if (!cachedApp) {
       cachedApp = createBackend({
         getSessionStore: () => getStore(env),
-        // 班级功能数据（班级/成员/手动录入的作业），与 SESSIONS 分 namespace
-        getClassStore: () => getStore(env, 'CLASSES'),
+        // 班级与 Agent 授权共用强一致事务，学校会话仍单独使用 KV。
+        getBusinessService: () => new DurableBusinessClient(env.BUSINESS),
         allowedOrigins: parseOrigins(env.CORS_ORIGINS),
         // 企业微信登录成功后跳回前端。必须是公网可达的地址。
         frontendUrl: env.FRONTEND_URL || '',

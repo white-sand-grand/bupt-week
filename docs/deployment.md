@@ -199,6 +199,20 @@ Node 以 TCP 连接的来源地址分桶，忽略客户端提供的 `CF-Connecti
 
 ## 8. 浏览器测试
 
+### 班级与 Agent API 的新存储
+
+班级和 Agent API 现在需要 `wrangler.toml` 中的 `BUSINESS` Durable Object 绑定及
+`business-v1` SQLite migration，学校会话继续使用 SESSIONS KV。旧 CLASSES KV
+仅作只读迁移来源，不能删除绑定后直接丢弃历史班级。
+
+升级前备份 CLASSES；先在 `npx wrangler dev` 中验证旧班级导入、并发录入、重试
+和撤销，再部署。所有新旧网页接口一起切换到事务存储，避免旧版后端继续写 KV。
+切换后不要直接降级回读取旧 KV 的版本；应保留新存储并做有数据迁移的回滚。
+
+Node 业务数据在 `.business.local.d/`，会话仍在 `.sessions.local.d/`，备份两者；
+同一业务目录只运行一个进程。不新增账号体系或个人资料源云同步。
+完整授权与调用说明见 [Agent API](agent-api.md)。
+
 部署前除了接口测试，还要过一遍真实浏览器——接口测试覆盖不到 blob 落盘、`<a download>`
 的文件名、以及 CORS 在真实浏览器里的放行/拦截。
 

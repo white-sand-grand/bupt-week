@@ -1,6 +1,9 @@
-import { ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { listGithubContents, resolveGithubRepository } from '../api/sources.js'
 import { friendlyError } from '../utils/errors.js'
+import { auth } from './auth.js'
+import { classesStore } from './classes.js'
+import { addClassSource, fetchClassSources, removeClassSource } from '../api/classes.js'
 
 const STORAGE_KEY = 'bupt-week-github-sources-v1'
 const storageError = ref('')
@@ -28,6 +31,59 @@ function restore() {
 const repositories = ref(restore())
 // 目录缓存只保留在内存；切标签不会丢失，每次点击刷新可重新取数。
 const browsers = ref({})
+const classSources = ref([])
+const sharedError = ref('')
+const sharedState = ref('idle')
+let sharedRevision = 0
+const allRepositories = computed(() => [...repositories.value, ...classSources.value.filter((source) => source.type === 'github')])
+const sharedLinks = computed(() => classSources.value.filter((source) => source.type === 'link'))
+
+async function loadShared() {
+  if (!auth.ucloudReady.value) return
+  const revision = ++sharedRevision
+  sharedState.value = 'loading'
+  sharedError.value = ''
+  try {
+    await classesStore.load()
+    if (classesStore.state.value === 'error') throw new Error(classesStore.error.value)
+    if (revision !== sharedRevision) return
+    const results = await Promise.allSettled(classesStore.classes.value.map(async (cls) => {
+      const data = await fetchClassSources(auth.sessionIdFor('ucloud'), cls.classId)
+      return (data.sources || []).map((source) => ({ ...source, classId: cls.classId, className: cls.name, classOwner: cls.createdBy }))
+    }))
+    if (revision !== sharedRevision) return
+    classSources.value = results.flatMap((result) => result.status === 'fulfilled' ? result.value : [])
+    const failed = results.find((result) => result.status === 'rejected')
+    if (failed) sharedError.value = `部分班级资料源获取失败：${friendlyError(failed.reason)}`
+    sharedState.value = 'done'
+  } catch (error) {
+    if (revision !== sharedRevision) return
+    sharedError.value = friendlyError(error)
+    sharedState.value = 'error'
+  }
+}
+
+async function addShared(classId, input) {
+  await addClassSource(auth.sessionIdFor('ucloud'), classId, input)
+  await loadShared()
+}
+
+async function removeShared(source) {
+  await removeClassSource(auth.sessionIdFor('ucloud'), source.classId, source.id)
+  await loadShared()
+}
+
+function canRemove(source) {
+  return !source.classId || source.createdBy === auth.username.value || source.classOwner === auth.username.value
+}
+
+watch(() => `${auth.username.value}:${auth.ucloudReady.value}`, () => {
+  sharedRevision += 1
+  classSources.value = []
+  sharedError.value = ''
+  sharedState.value = 'idle'
+  browsers.value = {}
+})
 
 function save() {
   try {
@@ -48,16 +104,19 @@ async function add(url) {
 
 function remove(repository) {
   repositories.value = repositories.value.filter((item) => item.url !== repository.url)
-  delete browsers.value[repository.url]
+  delete browsers.value[browserKey(repository)]
   save()
 }
 
 function stateFor(repository) {
-  if (!browsers.value[repository.url]) {
-    browsers.value[repository.url] = { open: false, path: '', state: 'idle', error: '', entries: [], limited: false, cache: Object.create(null), revision: 0 }
+  const key = browserKey(repository)
+  if (!browsers.value[key]) {
+    browsers.value[key] = { open: false, path: '', state: 'idle', error: '', entries: [], limited: false, cache: Object.create(null), revision: 0 }
   }
-  return browsers.value[repository.url]
+  return browsers.value[key]
 }
+
+function browserKey(repository) { return `${repository.classId || 'local'}:${repository.url}:${repository.ref}` }
 
 async function openDirectory(repository, path, refresh = false) {
   const state = stateFor(repository)
@@ -89,4 +148,5 @@ function toggle(repository) {
   if (state.open && state.state === 'idle') openDirectory(repository, '')
 }
 
-export const sourcesStore = { repositories, storageError, add, remove, stateFor, openDirectory, toggle }
+export const sourcesStore = { repositories, storageError, add, remove, stateFor, openDirectory, toggle,
+  allRepositories, sharedLinks, sharedError, sharedState, loadShared, addShared, removeShared, canRemove }

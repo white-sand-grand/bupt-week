@@ -1,6 +1,6 @@
 import { serve } from '@hono/node-server'
 import { createBackend } from '../app.js'
-import { FileSessionStore } from '../storage/file.js'
+import { FileBusinessStore, FileSessionStore } from '../storage/file.js'
 
 const port = Number(process.env.PORT || 8787)
 // 默认只绑回环。会话里存着上游 Cookie 和 token，不要暴露到局域网。
@@ -12,13 +12,14 @@ const allowedOrigins = String(process.env.CORS_ORIGINS || '')
   .filter(Boolean)
 
 // 会话落到项目目录的 .sessions.local.d/，旧 .sessions.local 首次访问时自动迁移。
-// 班级数据与会话共用这一个实例——键带 class:/user:/code: 前缀不会撞号；
-// 同一目录只由一个实例写入，保证同键操作的顺序。
+// 班级与 Agent 授权使用独立原子快照，旧班级键从会话存储只读迁入。
+// 同一目录只由一个实例写入；学校凭证不复制到业务快照。
 const store = new FileSessionStore()
+const businessStore = new FileBusinessStore(undefined, store)
 
 const app = createBackend({
   getSessionStore: () => store,
-  getClassStore: () => store,
+  getClassStore: () => businessStore,
   allowedOrigins,
   // 企业微信登录成功后跳回前端；不设则按 Referer 推断
   frontendUrl: process.env.FRONTEND_URL || '',

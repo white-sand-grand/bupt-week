@@ -1,15 +1,49 @@
 <script setup>
-import { ref } from 'vue'
+import { onMounted, ref, watch } from 'vue'
 import { sourcesStore } from '../composables/sources.js'
 import { downloadsStore } from '../composables/downloads.js'
 import { githubDownloadPath } from '../api/sources.js'
 import { formatBytes } from '../utils/format.js'
 import { friendlyError } from '../utils/errors.js'
 import ByrdocsSource from '../components/ByrdocsSource.vue'
+import { auth } from '../composables/auth.js'
+import { classesStore } from '../composables/classes.js'
 
 const url = ref('')
 const busy = ref(false)
 const error = ref('')
+const sharedClassId = ref('')
+const sharedType = ref('github')
+const sharedUrl = ref('')
+const sharedName = ref('')
+const sharedBusy = ref(false)
+const sharedFormError = ref('')
+
+async function loadShared() {
+  await sourcesStore.loadShared()
+  if (!classesStore.classes.value.some((cls) => cls.classId === sharedClassId.value)) sharedClassId.value = classesStore.classes.value[0]?.classId || ''
+}
+
+async function addShared() {
+  sharedBusy.value = true
+  sharedFormError.value = ''
+  try {
+    await sourcesStore.addShared(sharedClassId.value, { type: sharedType.value, url: sharedUrl.value, name: sharedName.value })
+    sharedUrl.value = ''
+    sharedName.value = ''
+  } catch (caught) { sharedFormError.value = friendlyError(caught) }
+  finally { sharedBusy.value = false }
+}
+
+async function removeSource(source) {
+  try {
+    if (source.classId) await sourcesStore.removeShared(source)
+    else sourcesStore.remove(source)
+  } catch (caught) { sharedFormError.value = friendlyError(caught) }
+}
+
+onMounted(() => { if (auth.ucloudReady.value) loadShared() })
+watch(() => auth.ucloudReady.value, (ready) => { if (ready) loadShared() })
 
 async function addRepository() {
   if (busy.value) return
@@ -43,7 +77,7 @@ function goBack(repository) {
   <section class="pane sources-pane">
     <header class="pane-head">
       <h2>添加源</h2>
-      <span class="counter">{{ sourcesStore.repositories.value.length }} 个仓库</span>
+      <span class="counter">{{ sourcesStore.allRepositories.value.length }} 个仓库</span>
     </header>
 
     <form class="source-form" @submit.prevent="addRepository">
@@ -69,9 +103,28 @@ function goBack(repository) {
       <p v-if="sourcesStore.storageError.value" class="error-text" role="status">{{ sourcesStore.storageError.value }}</p>
     </form>
 
-    <p v-if="!sourcesStore.repositories.value.length" class="empty">还没有添加仓库。粘贴一个 GitHub 仓库首页地址即可开始。</p>
+    <section v-if="auth.ucloudReady.value" class="shared-sources source-form">
+      <div class="directory-toolbar"><h3>班级资料源</h3><button class="text-button" type="button" :disabled="sourcesStore.sharedState.value === 'loading'" @click="loadShared">刷新班级资料源</button></div>
+      <p class="note">班级成员共享，Agent 添加的资料源也显示在这里。本机仓库列表仍只保存在浏览器。</p>
+      <p v-if="sourcesStore.sharedError.value" class="error-text" role="alert">{{ sourcesStore.sharedError.value }}</p>
+      <form v-if="classesStore.classes.value.length" class="source-form" @submit.prevent="addShared">
+        <label>选择班级<select v-model="sharedClassId" aria-label="选择班级" :disabled="sharedBusy" required><option v-for="cls in classesStore.classes.value" :key="cls.classId" :value="cls.classId">{{ cls.name }}</option></select></label>
+        <label>资料源类型<select v-model="sharedType" aria-label="资料源类型" :disabled="sharedBusy"><option value="github">公开 GitHub 仓库</option><option value="link">网页链接</option></select></label>
+        <label>资料源名称（可选）<input v-model="sharedName" maxlength="100" :disabled="sharedBusy"></label>
+        <label>资料源地址<input v-model="sharedUrl" type="url" maxlength="2048" placeholder="https://…" :disabled="sharedBusy" required></label>
+        <button class="button-primary" :disabled="sharedBusy || !sharedClassId">{{ sharedBusy ? '正在保存…' : '添加到班级' }}</button>
+      </form>
+      <p v-else-if="sourcesStore.sharedState.value !== 'loading'" class="note">到「班级」页加入或创建班级后，即可共享资料源。</p>
+      <p v-if="sharedFormError" class="error-text" role="alert">{{ sharedFormError }}</p>
+      <article v-for="source in sourcesStore.sharedLinks.value" :key="`${source.classId}:${source.id}`" class="shared-link repository-head">
+        <div class="repository-label"><a class="text-button" :href="source.url" target="_blank" rel="noopener noreferrer">{{ source.name }} ↗</a><p class="note">{{ source.className }} · 网页链接</p></div>
+        <button v-if="sourcesStore.canRemove(source)" class="text-button" type="button" :aria-label="`移除 ${source.name}`" @click="removeSource(source)">移除</button>
+      </article>
+    </section>
 
-    <article v-for="repository in sourcesStore.repositories.value" :key="repository.url" class="repository">
+    <p v-if="!sourcesStore.allRepositories.value.length" class="empty">还没有添加仓库。粘贴一个 GitHub 仓库首页地址即可开始。</p>
+
+    <article v-for="repository in sourcesStore.allRepositories.value" :key="`${repository.classId || 'local'}:${repository.url}`" class="repository">
       <header class="repository-head">
         <button
           class="repository-toggle"
@@ -83,9 +136,10 @@ function goBack(repository) {
           <span class="repository-label">
             <strong>{{ repository.owner }}/{{ repository.repo }}</strong>
             <span class="repository-url">{{ repository.url }}</span>
+            <span v-if="repository.classId" class="repository-url">{{ repository.className }} · 班级共享</span>
           </span>
         </button>
-        <button class="text-button remove-button" type="button" :aria-label="`移除 ${repository.owner}/${repository.repo}`" @click="sourcesStore.remove(repository)">移除</button>
+        <button v-if="sourcesStore.canRemove(repository)" class="text-button remove-button" type="button" :aria-label="`移除 ${repository.owner}/${repository.repo}`" @click="removeSource(repository)">移除</button>
       </header>
 
       <div v-if="sourcesStore.stateFor(repository).open" class="repository-body">
@@ -175,7 +229,8 @@ label {
   font-weight: 500;
 }
 
-input {
+input,
+select {
   min-width: 0;
   width: 100%;
   min-height: var(--touch);
