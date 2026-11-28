@@ -126,3 +126,37 @@ test('GitHub 错误：限流、私有或缺失仓库、地址迁移与网络失�
   assert.equal(response.status, 502)
   assert.match((await response.json()).msg, /无法连接 GitHub/)
 })
+
+test('添加源：跨站引用（Origin/Referer 不在白名单）在取数前拒绝', async (t) => {
+  const upstream = t.mock.method(globalThis, 'fetch', () => { throw new Error('不应访问上游') })
+  const app = createBackend({ allowedOrigins: ['https://example.org'] })
+  // 用非回环的请求 URL 才会走到真实准入分支（本机回环形态默认放行）。
+  const base = 'https://backend.example'
+  const cases = [
+    { path: '/api/sources/github', init: { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url: 'https://github.com/a/b' }) }, headers: { Origin: 'https://evil.example' } },
+    { path: '/api/sources/github/contents?owner=a&repo=b&ref=main&path=', init: { method: 'GET' }, headers: { Referer: 'https://evil.example/page' } },
+    { path: `/api/sources/github/download?${QUERY}`, init: { method: 'GET' }, headers: { Origin: 'https://evil.example' } },
+  ]
+  for (const { path, init, headers } of cases) {
+    const response = await app.request(new Request(`${base}${path}`, { ...init, headers: { ...init.headers, ...headers } }))
+    assert.equal(response.status, 403, path)
+    assert.match((await response.json()).msg, /白名单/)
+  }
+  assert.equal(upstream.mock.callCount(), 0)
+})
+
+test('添加源：匿名浏览按来源限次，防单一客户端打满共享的 GitHub 匿名配额', async (t) => {
+  const app = createBackend()
+  t.mock.method(globalThis, 'fetch', async () => json(REPOSITORY))
+  let last
+  for (let i = 0; i < 61; i += 1) {
+    last = await app.request('/api/sources/github', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: 'https://github.com/teacher/homework' }),
+    })
+    if (i < 60) assert.equal(last.status, 200, `第 ${i + 1} 次应正常`)
+  }
+  assert.equal(last.status, 429, '第 61 次应限流')
+  assert.match((await last.json()).msg, /太频繁/)
+})

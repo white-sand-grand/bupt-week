@@ -170,3 +170,15 @@ test('ByrDocs：无本站会话不可连接或下载，登录重定向/HTML 页�
     mock.mock.restore()
   }
 })
+
+test('ByrDocs 搜索：匿名按来源限次，防脚本刷爆上游搜索接口', async (t) => {
+  const { app } = makeApp()
+  t.mock.method(globalThis, 'fetch', async () => Response.json({ results: [] }))
+  let last
+  for (let i = 0; i < 31; i += 1) {
+    last = await post(app, '/api/sources/byrdocs/search', { keyword: '概率论', type: 'all' })
+    if (i < 30) assert.equal(last.status, 200, `第 ${i + 1} 次应正常`)
+  }
+  assert.equal(last.status, 429, '第 31 次应限流')
+  assert.match((await last.json()).msg, /太频繁/)
+})

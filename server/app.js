@@ -36,12 +36,12 @@ export function createBackend({ getSessionStore = null, getClassStore = null, ge
     c.json({ success: true, data: { ok: true, now: new Date().toISOString() } }),
   )
 
-  // 公开仓库不需要学校登录态，也不访问会话存储。
-  app.route('/api/sources', createSourcesRoutes())
+  // 公开仓库不需要学校登录态，也不访问会话存储；匿名入口带来源准入与限速。
+  app.route('/api/sources', createSourcesRoutes({ allowedOrigins }))
 
   // 业务接口与会话都依赖存储，没注入就不挂——而不是挂上去每次都 401。
   if (getSessionStore) {
-    app.route('/api/sources/byrdocs', createByrdocsRoutes({ getSessionStore }))
+    app.route('/api/sources/byrdocs', createByrdocsRoutes({ getSessionStore, allowedOrigins }))
     app.route('/api', createApiRoutes({ getSessionStore }))
     app.route('/api', createAuthRoutes({ getSessionStore, frontendUrl, allowedOrigins }))
     if (business) {

@@ -1,6 +1,7 @@
 import { ApiError } from '../http.js'
 import { withUserAgent } from '../user-agent.js'
 import { corsHeadersFor } from '../cors.js'
+import { isAdmitted } from '../admission.js'
 
 const FILE_ORIGIN = 'https://fileucloud.bupt.edu.cn'
 const SOURCE_ORIGIN = 'https://ucloud.bupt.edu.cn'
@@ -8,38 +9,6 @@ const SOURCE_ORIGIN = 'https://ucloud.bupt.edu.cn'
 // S3 兼容存储会拒绝携带业务鉴权头的请求（收到非 AWS4 签名报 InvalidRequest），
 // 同时靠 Origin / Referer 校验防盗链。两边必须同时满足，只有服务端做得到。
 const STRIPPED_REQUEST_HEADERS = ['authorization', 'blade-auth', 'tenant-id', 'cookie']
-
-/**
- * 来源准入：请求只要带了 Origin 或 Referer，就必须命中白名单之一。
- *
- * 浏览器跨站引用一定带其一，这条挡的是把本代理当免费外链/带宽中继挂到
- * 别的站点上；非浏览器的直连滥用它挡不住，那一层靠 Cloudflare 的限速规则。
- * 后端跑在回环地址上（本机开发形态）时直接放行——生产 Worker 的域名
- * 永远不是回环，这条不影响线上防护。
- */
-function isAdmitted(request, allowedOrigins, ownOrigin) {
-  try {
-    if (new URL(ownOrigin).hostname === '127.0.0.1' || new URL(ownOrigin).hostname === 'localhost'
-      || new URL(ownOrigin).hostname === '[::1]' || new URL(ownOrigin).hostname === '::1') {
-      return true
-    }
-  } catch {
-    // ownOrigin 解析不了就按正常流程判断
-  }
-
-  const origin = request.headers.get('Origin')
-  if (origin) return allowedOrigins.includes(origin)
-
-  const referer = request.headers.get('Referer')
-  if (referer) {
-    try {
-      return allowedOrigins.includes(new URL(referer).origin)
-    } catch {
-      return false
-    }
-  }
-  return true
-}
 
 // 重建 Response 时要丢掉的传输类头部。transfer-encoding 永远丢（undici 已
 // dechunk）；content-encoding 永远丢——undici 已按它解压过 body，保留头会让

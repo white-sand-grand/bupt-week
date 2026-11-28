@@ -1,11 +1,22 @@
 import { Hono } from 'hono'
 import { ApiError, readJson } from '../http.js'
-import { createLoginRateLimiter } from '../rate-limit.js'
+import { createLoginRateLimiter, createRequestRateLimiter } from '../rate-limit.js'
+import { isAdmitted } from '../admission.js'
 import { byrdocsSessionKey, downloadByrdocs, loginByrdocs, saveByrdocsSession, searchByrdocs } from '../services/byrdocs.js'
 
-export function createByrdocsRoutes({ getSessionStore }) {
+export function createByrdocsRoutes({ getSessionStore, allowedOrigins = [] }) {
   const routes = new Hono()
   const limitLogin = createLoginRateLimiter()
+  // 搜索匿名可用且每次都打第三方：限请求次数，防止脚本刷爆 BYR 的搜索接口
+  // 导致全站搜索被上游限流（WAF 外层兜底见 docs/deployment.md）。
+  const limitSearch = createRequestRateLimiter({ maxRequests: 30, windowMs: 60_000 })
+
+  function admit(c) {
+    const own = new URL(c.req.url)
+    if (!isAdmitted(c.req.raw, allowedOrigins, `${own.protocol}//${own.host}`)) {
+      throw new ApiError(403, '来源不在白名单内，拒绝代理该请求')
+    }
+  }
 
   async function sessionFor(sessionId) {
     const store = getSessionStore()
@@ -32,11 +43,12 @@ export function createByrdocsRoutes({ getSessionStore }) {
     return c.json({ success: true, data: { ready: true } })
   }))
 
-  routes.post('/search', async (c) => {
+  routes.post('/search', limitSearch(async (c) => {
+    admit(c)
     const { keyword, type } = await readJson(c.req.raw)
     const results = await searchByrdocs({ keyword, type })
     return c.json({ success: true, data: { results } })
-  })
+  }))
 
   routes.post('/download', async (c) => {
     const { sessionId, key, filename } = await readJson(c.req.raw)

@@ -179,9 +179,19 @@ Node 按键异步落盘，写入成功后接口才返回；同一目录只运行
 三个登录接口（`/api/auth/login`、`/api/ucloud/login`、`/api/jwgl/login`）内置了
 进程内限速：同一来源 IP 10 分钟内密码错 10 次后返回 429。它挡的是单一来源的
 低成本爆破；分布式攻击、以及 Workers 多 isolate 各自计数的问题，应用层挡不住。
-另外 `/api/auth/wecom/start` 是匿名入口但每次命中都写一条 KV（企微回流的
-state 暂存），应用层已按同 IP 10 分钟 30 次限速。上线后建议在 Cloudflare 控制台
-给后端域名加一条 **WAF 限速规则**（同 IP 对这四个路径限速），作为外层兜底。
+
+另外五个匿名入口每次命中都会写一条 KV、打第三方或流式转发大文件，应用层已按
+同 IP 每分钟限次：`/api/auth/wecom/start`（10 分钟 30 次，企微回流 state 暂存）、
+`/api/sources/github` 与 `/api/sources/github/contents`（60 次/分钟，GitHub 匿名
+配额 60 次/小时按本站出口 IP 全站共享）、`/api/sources/github/download`
+（20 次/分钟，单文件可达 100 MB）、`/api/byrdocs/search`（30 次/分钟）。
+这些路径还带来源准入：请求只要带 Origin/Referer 就必须命中前端白名单，挡住把
+接口当免费外链挂到别的站点；非浏览器直连不受准入约束，靠限速与 WAF 兜底。
+
+上线后建议在 Cloudflare 控制台给后端域名加 **WAF 限速规则**（同 IP 对以下
+八个路径限速），作为外层兜底：`/api/auth/login`、`/api/ucloud/login`、
+`/api/jwgl/login`、`/api/auth/wecom/start`、`/api/sources/github`、
+`/api/sources/github/contents`、`/api/sources/github/download`、`/api/byrdocs/search`。
 
 Node 以 TCP 连接的来源地址分桶，忽略客户端提供的 `CF-Connecting-IP`、
 `X-Forwarded-For` 和 `X-Real-IP`。如果前面有 Vite 或反向代理，应用看到的是代理
