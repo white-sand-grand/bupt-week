@@ -2294,6 +2294,8 @@ test('班级：创建班级 → 录入作业 → 班级列表与作业 tab 合�
     // 创建成功：班级卡出现（mock 的 list 返回了这个班）
     await page.waitForSelector('.view .class-card')
     assert.match(await page.textContent('.view .class-card'), new RegExp(created.code))
+    assert.match(await page.textContent('.view .class-card'), /加入密码\s*class-pw/)
+    assert.equal(await page.locator('.view .password-chip').count(), 1, '创建者应看到班级加入密码')
 
     // 录入作业（标题/科目/内容必填，截止 datetime-local）。
     // 视图里还有「加入或创建班级」折叠入口，必须按文案精确匹配。

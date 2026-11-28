@@ -24,6 +24,8 @@ const assignmentsByClass = ref({})
 const state = ref('idle') // idle | loading | done | error
 const error = ref('')
 const selectedId = ref('')
+// 建班时的明文密码只在当前页面会话内存中保留，供创建者回看；不写入服务端或浏览器存储。
+const knownPasswords = new Map()
 // 并发/换号守卫：load 全程有两个 await，登出或换号后迟到的响应不得写回，
 // 否则下一个账号会看到上一个账号的班级与作业（ensureLoaded 见 state!=='idle' 不再拉）。
 let revision = 0
@@ -70,7 +72,13 @@ async function load() {
   try {
     const data = await listMyClasses(sessionId)
     if (mine !== revision || auth.sessionIdFor('ucloud') !== sessionId) return
-    const classList = data.classes || []
+    const classList = (data.classes || []).map((item) => {
+      // 列表接口不应返回明文；即使未来误带，也只接受本页面建班时记住的值。
+      const { password: _password, ...cls } = item
+      const key = `${auth.username.value}:${cls.classId}`
+      const password = cls.createdBy === auth.username.value ? knownPasswords.get(key) : ''
+      return password ? { ...cls, password } : cls
+    })
     classes.value = classList
     selectedId.value = classList.some((cls) => cls.classId === selectedId.value)
       ? selectedId.value
@@ -102,6 +110,9 @@ async function ensureLoaded() {
 
 async function create({ name, password }) {
   const data = await createClass(auth.sessionIdFor('ucloud'), name, password)
+  if (data.classId && typeof password === 'string') {
+    knownPasswords.set(`${auth.username.value}:${data.classId}`, password)
+  }
   await load()
   return data
 }
@@ -135,6 +146,7 @@ function select(classId) {
 
 function reset() {
   revision += 1
+  knownPasswords.clear()
   classes.value = []
   assignmentsByClass.value = {}
   state.value = 'idle'

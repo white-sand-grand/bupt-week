@@ -92,6 +92,7 @@ async function submitAssignment() {
 const deleting = ref('')
 const deleteError = ref('')
 const copied = ref(false)
+const passwordCopied = ref(false)
 
 // 解散是高危操作：点一次进入确认态（按钮变「确认解散？」），4 秒内再点才执行
 const dissolveArm = ref(false)
@@ -138,6 +139,18 @@ async function copyCode() {
     setTimeout(() => { copied.value = false }, 1500)
   } catch {
     // 剪贴板不可用（http/旧内核）：选不中就算了，班级号本来就显示在卡片上
+  }
+}
+
+async function copyPassword() {
+  const password = classesStore.selectedClass.value?.password || ''
+  if (!password) return
+  try {
+    await navigator.clipboard.writeText(password)
+    passwordCopied.value = true
+    setTimeout(() => { passwordCopied.value = false }, 1500)
+  } catch {
+    // 剪贴板不可用时密码仍直接显示在卡片上。
   }
 }
 
@@ -254,6 +267,16 @@ watch(() => auth.ucloudReady.value, startLoad)
           <button class="code-chip" type="button" :title="'点击复制班级号'" @click="copyCode">
             班级号 {{ classesStore.selectedClass.value.code }}
             <span v-if="copied" class="copied">已复制</span>
+          </button>
+          <button
+            v-if="classesStore.selectedClass.value.createdBy === auth.username.value && classesStore.selectedClass.value.password"
+            class="password-chip"
+            type="button"
+            title="点击复制班级加入密码"
+            @click="copyPassword"
+          >
+            加入密码 <code>{{ classesStore.selectedClass.value.password }}</code>
+            <span v-if="passwordCopied" class="copied">已复制</span>
           </button>
           <span class="member-count">{{ classesStore.selectedClass.value.memberCount }} 人</span>
           <button
@@ -558,6 +581,7 @@ h3 {
   display: flex;
   align-items: center;
   gap: 0.75rem;
+  flex-wrap: wrap;
   font-size: 0.8125rem;
   color: var(--muted);
 }
@@ -618,6 +642,32 @@ h3 {
   font-weight: 500;
   letter-spacing: 0.08em;
   cursor: pointer;
+}
+
+.password-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-height: var(--touch);
+  max-width: 100%;
+  padding: 0.25rem 0.75rem;
+  border: 1px dashed var(--brand-500);
+  border-radius: var(--radius-pill);
+  background: none;
+  color: var(--brand-700);
+  font: inherit;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.password-chip code {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  font-weight: 500;
 }
 
 .copied {
