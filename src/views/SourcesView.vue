@@ -5,6 +5,7 @@ import { downloadsStore } from '../composables/downloads.js'
 import { githubDownloadPath } from '../api/sources.js'
 import { formatBytes } from '../utils/format.js'
 import { friendlyError } from '../utils/errors.js'
+import { safeExternalUrl } from '../utils/safe-link.js'
 import ByrdocsSource from '../components/ByrdocsSource.vue'
 import { auth } from '../composables/auth.js'
 import { classesStore } from '../composables/classes.js'
@@ -64,7 +65,8 @@ function downloadId(repository, entry) {
 }
 
 function originalUrl(repository, path) {
-  return `${repository.url}/tree/${encodeURIComponent(repository.ref)}/${path.split('/').map(encodeURIComponent).join('/')}`
+  // 外链只放行 http(s)（服务端已校验，这里兜底）：非白名单降级为不可点。
+  return safeExternalUrl(`${repository.url}/tree/${encodeURIComponent(repository.ref)}/${path.split('/').map(encodeURIComponent).join('/')}`) || undefined
 }
 
 function goBack(repository) {
@@ -117,7 +119,7 @@ function goBack(repository) {
       <p v-else-if="sourcesStore.sharedState.value !== 'loading'" class="note">到「班级」页加入或创建班级后，即可共享资料源。</p>
       <p v-if="sharedFormError" class="error-text" role="alert">{{ sharedFormError }}</p>
       <article v-for="source in sourcesStore.sharedLinks.value" :key="`${source.classId}:${source.id}`" class="shared-link repository-head">
-        <div class="repository-label"><a class="text-button" :href="source.url" target="_blank" rel="noopener noreferrer">{{ source.name }} ↗</a><p class="note">{{ source.className }} · 网页链接</p></div>
+        <div class="repository-label"><a class="text-button" :href="safeExternalUrl(source.url) || undefined" target="_blank" rel="noopener noreferrer">{{ source.name }} ↗</a><p class="note">{{ source.className }} · 网页链接</p></div>
         <button v-if="sourcesStore.canRemove(source)" class="text-button" type="button" :aria-label="`移除 ${source.name}`" @click="removeSource(source)">移除</button>
       </article>
     </section>

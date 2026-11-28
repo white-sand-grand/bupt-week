@@ -3,7 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { api } from './api/client.js'
 import { auth } from './composables/auth.js'
 import { theme } from './composables/theme.js'
-import { wecomStartUrl } from './api/auth.js'
+import { checkUcloudSession, wecomStartUrl } from './api/auth.js'
 import { isInWechatBrowser } from './utils/platform.js'
 import LoginPanel from './components/LoginPanel.vue'
 import TimetableView from './views/TimetableView.vue'
@@ -17,6 +17,10 @@ const detail = ref('')
 const view = ref('timetable')
 // 企微自动识别失败的human readable原因（回流 hash 里的 error 码翻译）
 const wecomError = ref('')
+// 企微回流待确认的登录身份。URL 里带回的 sessionId 谁都可以构造——
+// 先向后端核出真实姓名，让用户亲眼确认是本人再落地（登录 CSRF 防线：
+// 否则攻击者把自己的会话链接发给你，你会静默登进他的账号，操作全归他看）。
+const pendingWecom = ref(null)
 
 // 企微回流的失败码 → 说人话。全部给出路：重试按钮就在登录面板里。
 const WECOM_ERROR_TEXT = {
@@ -33,6 +37,18 @@ const AUTO_WECOM_KEY = 'bupt-week-auto-wecom-tried'
 // 在微信内置浏览器里打开时（企业微信 webview 也算），未登录就自动识别身份。
 const inWechat = computed(isInWechatBrowser)
 
+// 确认进入企微带回来的账号：落地前再核一次（确认期间可能已过期/登出）。
+async function confirmWecom() {
+  const sessionId = pendingWecom.value?.sessionId
+  pendingWecom.value = null
+  if (!sessionId || auth.loggedIn.value) return
+  try {
+    await auth.adoptWecomSession(sessionId)
+  } catch {
+    wecomError.value = '这个企业微信登录身份刚刚失效了。可点下方按钮重新识别，或用学号密码登录。'
+  }
+}
+
 onMounted(async () => {
   try {
     await api('/api/health')
@@ -44,16 +60,21 @@ onMounted(async () => {
 
   // 企业微信回流：后端把 sessionId 放在 URL fragment 里带回来（不进 Referer）。
   // 落地后第一件事就是消费它并把 URL 清干净——留着等于把凭证放在地址栏
-  // 和历史记录里。无效（过期/伪造）就当没发生，走常规 restore。
+  // 和历史记录里。sessionId 谁都可以构造，所以不直接落地：先核出姓名请用户
+  // 确认（pendingWecom），确认前绝不写入登录态。无效（过期/伪造）就当没发生。
   //
   // hash 形如 #/login?wecom=ok&sessionId=…：路由路径在前、参数在问号后，
   // 直接拿整段喂 URLSearchParams 会把「/login?wecom」当成键名。
   const hashQuery = new URLSearchParams(location.hash.split('?')[1] || '')
   const wecomSessionId = hashQuery.get('wecom') === 'ok' ? hashQuery.get('sessionId') || '' : ''
+  // 本次挂载是从企微回流回来的：不再自动发起识别（用户要么确认进入，
+  // 要么自己选别的登录方式），否则会打断确认、循环跳走。
+  const cameFromWecom = Boolean(wecomSessionId)
   if (wecomSessionId) {
     history.replaceState(null, '', location.pathname + location.search)
     try {
-      await auth.adoptWecomSession(wecomSessionId)
+      const data = await checkUcloudSession(wecomSessionId)
+      if (!auth.loggedIn.value) pendingWecom.value = data
     } catch {
       // 会话无效，保持未登录，登录面板就在下面
     }
@@ -63,7 +84,7 @@ onMounted(async () => {
 
   // 微信里：未登录就自动发起企业微信识别，不用用户点。
   // 只在本次会话试一次，失败后交给用户手动选择，避免卡死在循环里。
-  if (inWechat.value && !auth.loggedIn.value && !sessionStorage.getItem(AUTO_WECOM_KEY)) {
+  if (inWechat.value && !auth.loggedIn.value && !cameFromWecom && !sessionStorage.getItem(AUTO_WECOM_KEY)) {
     sessionStorage.setItem(AUTO_WECOM_KEY, '1')
     location.href = wecomStartUrl
     return
@@ -125,6 +146,14 @@ onMounted(async () => {
     <!-- 登录面板：未登录时常驻。它不挡下面的视图，页面照常进、照常切。 -->
     <div v-if="wecomError && !auth.loggedIn.value" class="banner banner-warn" role="status">
       {{ wecomError }}
+    </div>
+    <!-- 企微回流待确认：明示将要进入的账号，由用户点头才落地。 -->
+    <div v-if="pendingWecom && !auth.loggedIn.value" class="banner banner-warn wecom-confirm" role="status">
+      <p>检测到企业微信登录身份：<strong>{{ pendingWecom.realName || pendingWecom.username || '未知账号' }}</strong>（{{ pendingWecom.username || '无学号' }}）。确认是本人再进入。</p>
+      <div class="wecom-confirm-actions">
+        <button class="text-button" type="button" @click="confirmWecom">进入该账号</button>
+        <button class="link-button" type="button" @click="pendingWecom = null">不是本人</button>
+      </div>
     </div>
     <LoginPanel v-if="!auth.loggedIn.value" :auth="auth" />
 
@@ -328,6 +357,33 @@ h1 {
   color: var(--warn);
   background: var(--warn-bg);
   border: 1px solid var(--warn-line);
+}
+
+.wecom-confirm p {
+  margin: 0 0 0.375rem;
+}
+
+.wecom-confirm strong {
+  color: var(--ink);
+}
+
+.wecom-confirm-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.wecom-confirm-actions .text-button {
+  min-height: var(--touch);
+  padding: 0 0.75rem;
+  border: 1px solid var(--warn-line);
+  border-radius: var(--radius-sm);
+  color: var(--ink);
+  font-size: 0.8125rem;
+}
+
+.wecom-confirm-actions .text-button:hover {
+  border-color: var(--warn);
 }
 
 /* 以编号和细下划线组织功能入口，保持工具界面的轻量感。 */

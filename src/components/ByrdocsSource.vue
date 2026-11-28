@@ -5,6 +5,7 @@ import { auth } from '../composables/auth.js'
 import { downloadsStore } from '../composables/downloads.js'
 import { friendlyError } from '../utils/errors.js'
 import { formatBytes } from '../utils/format.js'
+import { safeExternalUrl } from '../utils/safe-link.js'
 
 const ready = ref(false)
 const checking = ref(false)
@@ -132,7 +133,7 @@ onUnmounted(() => { revision += 1; controller?.abort(); password.value = '' })
         <span class="result-title">{{ item.title }}</span>
         <div class="result-actions">
           <span class="note">{{ formatBytes(item.size) }}</span>
-          <a :href="item.url" target="_blank" rel="noopener noreferrer">官网查看 ↗</a>
+          <a :href="safeExternalUrl(item.url) || undefined" target="_blank" rel="noopener noreferrer">官网查看 ↗</a>
           <button type="button" :disabled="!ready || downloadsStore.isBusy(itemId(item))" @click="download(item)">{{ ready ? '下载' : '连接后下载' }}</button>
         </div>
         <p v-if="downloadsStore.hintFor(itemId(item))" class="note" role="status">{{ downloadsStore.hintFor(itemId(item)) }}</p>

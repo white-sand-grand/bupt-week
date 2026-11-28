@@ -277,7 +277,7 @@ const statusSummary = computed(() => {
               class="go-submit"
               :href="buildAssignmentUrl(assignment.id)"
               target="_blank"
-              rel="noopener"
+              rel="noopener noreferrer"
             >去交作业</a>
             <button
               v-else
