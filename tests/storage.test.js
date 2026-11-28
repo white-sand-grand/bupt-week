@@ -226,6 +226,20 @@ test('KvSessionStore：读到无法解析的数据时清理并返回 undefined',
   assert.deepEqual(kv.deletes, ['a'])
 })
 
+test('KvSessionStore：非字符串键当不存在（畸形 sessionId 走 401 而不是 KV 异常 500）', async () => {
+  const kv = new FakeKv()
+  const store = new KvSessionStore(kv)
+
+  for (const bad of [undefined, null, 123, {}]) {
+    assert.equal(await store.get(bad), undefined, String(bad))
+    assert.equal(await store.delete(bad), false, String(bad))
+    assert.equal(await store.set(bad, makeSession()), undefined, String(bad))
+  }
+  assert.equal(kv.reads, 0, '不应触碰 KV')
+  assert.equal(kv.writes.length, 0, '不应触碰 KV')
+  assert.equal(kv.deletes.length, 0, '不应触碰 KV')
+})
+
 test('KvSessionStore：没有 KV 绑定时应立刻报错', () => {
   assert.throws(() => new KvSessionStore(null), /KV namespace/)
 })

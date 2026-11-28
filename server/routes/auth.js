@@ -179,18 +179,20 @@ export function createAuthRoutes({ getSessionStore, frontendUrl = '', allowedOri
 
   routes.post('/auth/login', limitLogin(async (c) => {
     const { username, password } = await readJson(c.req.raw)
-    const { ucloud, jwgl, jwglVia, jwglMessage, jwglPasswordNeeded } = await loginBothSystems({ username, password })
+    // BYR 认证只依赖同一次输入的学号密码，与学校登录并行跑：第三方慢或挂时
+    // 不再拖长每个用户的登录（串行时两条上游请求最多多等 30 秒）。
+    // 学校登录失败（密码错）时 BYR 的结果直接丢弃；独立服务失败不阻断学校登录，
+    // 密码仍只在这次请求的内存中使用。
+    const [{ ucloud, jwgl, jwglVia, jwglMessage, jwglPasswordNeeded }, byrdocs] = await Promise.all([
+      loginBothSystems({ username, password }),
+      loginByrdocs({ username, password }).then(
+        (token) => ({ token }),
+        () => ({ token: '', message: 'BYR Docs 暂未连接，可在添加源页补充连接；课表和作业不受影响' }),
+      ),
+    ])
 
     const store = getSessionStore()
     const ucloudSessionId = newSessionId()
-    // 独立服务失败不阻断学校登录；密码仍只在这次请求的内存中使用。
-    let byrdocsToken = ''
-    let byrdocsMessage = ''
-    try {
-      byrdocsToken = await loginByrdocs({ username, password })
-    } catch {
-      byrdocsMessage = 'BYR Docs 暂未连接，可在添加源页补充连接；课表和作业不受影响'
-    }
 
     await store.set(ucloudSessionId, {
       kind: 'ucloud',
@@ -198,7 +200,7 @@ export function createAuthRoutes({ getSessionStore, frontendUrl = '', allowedOri
       createdAt: Date.now(),
       expiresAt: expiresAt(),
     })
-    if (byrdocsToken) await saveByrdocsSession(store, ucloudSessionId, byrdocsToken)
+    if (byrdocs.token) await saveByrdocsSession(store, ucloudSessionId, byrdocs.token)
 
     // 教务侧降级（jwgl 为 null）时不建会话。凭证形态按数据源分两种：
     // jwglweixin（token）/ jwgl（Cookie 罐），消费方按 kind 分流。
@@ -222,7 +224,7 @@ export function createAuthRoutes({ getSessionStore, frontendUrl = '', allowedOri
         jwgl: jwgl ? { sessionId: jwglSessionId, username } : null,
         // 方便排查：移动教务 / 教务处 CAS / 老登录 / 全部不可达
         jwglVia,
-        byrdocs: { ready: Boolean(byrdocsToken), message: byrdocsMessage },
+        byrdocs: { ready: Boolean(byrdocs.token), message: byrdocs.message || '' },
         ...(jwglMessage ? { jwglMessage } : {}),
         ...(jwglPasswordNeeded ? { jwglPasswordNeeded } : {}),
         expiresAt: expiresAt(),

@@ -11,6 +11,10 @@ import { isLive } from './is-live.js'
  *   - 进程内缓存由 entries/worker.js 的模块级单例保住
  *
  * 代价是 isolate 被回收后首次请求要回源 KV 一次，可接受。
+ *
+ * 非字符串键一律当不存在（与 FileSessionStore 同规）：畸形请求体里
+ * sessionId 可能是 undefined/null，KV.get 对非串会抛异常，那会把本该
+ * 401 的「未登录」变成 500。
  */
 export class KvSessionStore {
   /** @param {{ get: Function, put: Function, delete: Function }} kv KV namespace 绑定 */
@@ -21,6 +25,7 @@ export class KvSessionStore {
   }
 
   async get(id) {
+    if (typeof id !== 'string') return undefined
     const cached = await this.cache.get(id)
     if (cached) return cached
 
@@ -43,6 +48,7 @@ export class KvSessionStore {
   }
 
   async set(id, session) {
+    if (typeof id !== 'string') return undefined
     await this.cache.set(id, session)
     const ttl = Math.max(1, Math.ceil((session.expiresAt - Date.now()) / 1000))
     await this.kv.put(id, JSON.stringify(session), { expirationTtl: ttl })
@@ -50,6 +56,7 @@ export class KvSessionStore {
   }
 
   async delete(id) {
+    if (typeof id !== 'string') return false
     await this.cache.delete(id)
     await this.kv.delete(id)
     return true
