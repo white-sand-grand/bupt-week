@@ -660,13 +660,20 @@ test('教务会话过期后刷新：降级黄条出现，补填教务密码可�
 
 // ── 企业微信回流落地 ────────────────────────────────────────────────────────
 
-test('企微回流：hash 带回的 sessionId 落地成登录态，且 URL 被清干净', async () => {
+test('企微回流：hash 带回的 sessionId 经确认后落地成登录态，且 URL 被清干净', async () => {
   const page = await browser.newPage()
   try {
     await page.route('**/api/ucloud/session', (route) => fulfill(route, UCLOUD_SESSION))
 
     // 后端 callback 成功后的落地形态：fragment 里有路由路径 + 参数
     await page.goto(`${APP_ORIGIN}/#/login?wecom=ok&sessionId=uc-sid`, { waitUntil: 'networkidle' })
+
+    // 确认步：先亮明身份，未确认前绝不落地（防登录 CSRF：别人塞会话链接）
+    await page.waitForSelector('.wecom-confirm')
+    assert.match(await page.textContent('.wecom-confirm'), /张三/)
+    assert.equal(await page.evaluate(() => localStorage.getItem('bupt-week-ucloud-auth')), null)
+
+    await page.click('.wecom-confirm .text-button')
 
     // 会话真的建立：面板收起、顶栏出姓名、localStorage 落下标准形状
     await page.waitForFunction(() => document.querySelectorAll('.panel').length === 0)
@@ -688,6 +695,31 @@ test('企微回流：hash 带回的 sessionId 落地成登录态，且 URL 被�
 
     // sessionId 不能留在地址栏/历史里
     assert.equal(page.url().includes('sessionId='), false, 'sessionId 不该留在地址栏')
+  } finally {
+    await page.close()
+  }
+})
+
+test('企微回流：确认步里点「不是本人」不落地，可用学号密码登录', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.route('**/api/ucloud/session', (route) => fulfill(route, UCLOUD_SESSION))
+    await page.route('**/api/auth/login', (route) => fulfill(route, LOGIN_OK))
+
+    await page.goto(`${APP_ORIGIN}/#/login?wecom=ok&sessionId=uc-sid`, { waitUntil: 'networkidle' })
+    await page.waitForSelector('.wecom-confirm')
+
+    await page.click('.wecom-confirm .link-button')
+    await page.waitForSelector('.wecom-confirm', { state: 'detached' })
+    assert.equal(await page.evaluate(() => localStorage.getItem('bupt-week-ucloud-auth')), null)
+    assert.match(await page.textContent('.topbar-auth'), /未登录/)
+
+    // 婉拒后登录面板照常可用
+    await page.fill(`${panel} input[type="text"]`, '2021001234')
+    await page.fill(`${panel} input[type="password"]`, 'pw')
+    await page.click(`${panel} button[type="submit"]`)
+    await page.waitForFunction(() => document.querySelectorAll('.panel').length === 0)
+    assert.match(await page.textContent('.topbar-auth'), /张三/)
   } finally {
     await page.close()
   }
@@ -773,6 +805,129 @@ test('对抗：登出后在途心跳不能把登录态写回（退出不复活�
     assert.match(await page.textContent('.topbar-auth'), /未登录/)
   } finally {
     releaseProbe()
+    await page.close()
+  }
+})
+
+test('对抗：登出在途的班级响应不能写回，换号后不得看到上一账号的班级', async () => {
+  const page = await browser.newPage()
+  let releaseList = () => {}
+  let listCalls = 0
+  try {
+    // 第一次班级列表捏在闸里（A 的数据），放行要在登出之后；
+    // 之后的调用（换号后的重新加载）返回空列表。
+    const listGate = new Promise((resolve) => { releaseList = resolve })
+    await page.route('**/api/auth/login', (route) => fulfill(route, LOGIN_OK))
+    await page.route('**/api/ucloud/session', (route) => fulfill(route, UCLOUD_SESSION))
+    await page.route('**/api/ucloud/logout', (route) => fulfill(route, { success: true }))
+    await page.route('**/api/jwgl/logout', (route) => fulfill(route, { success: true }))
+    await page.route('**/api/ucloud/assignments', (route) =>
+      fulfill(route, { success: true, data: { assignments: [] } }))
+    await page.route('**/api/classes/list', async (route) => {
+      listCalls += 1
+      if (listCalls === 1) {
+        await listGate
+        return fulfill(route, { success: true, data: { classes: [
+          { classId: 'cls-a', code: '7XA4K2M9Q3', name: '软件 2301 班', createdBy: '2021001234', memberCount: 1, createdAt: Date.now() },
+        ] } })
+      }
+      return fulfill(route, { success: true, data: { classes: [] } })
+    })
+    await page.route('**/api/classes/assignments', (route) => {
+      // 修复前：迟到的列表响应会继续逐班拉作业；修复后不会发这次请求。
+      return fulfill(route, { success: true, data: { assignments: [
+        { id: 'ca-a', assignmentTitle: 'A 的班级作业', chapterName: '高等数学', siteId: 'class:cls-a',
+          siteName: '软件 2301 班', assignmentEndTime: '', assignmentStatus: 99, content: 'A 的内容', createdBy: '2021001234' },
+      ] } })
+    })
+
+    await page.goto(APP_ORIGIN, { waitUntil: 'networkidle' })
+    await page.fill(`${panel} input[type="text"]`, '2021001234')
+    await page.fill(`${panel} input[type="password"]`, 'pw')
+    await page.click(`${panel} button[type="submit"]`)
+    await page.waitForFunction(() => document.querySelectorAll('.panel').length === 0)
+
+    // 作业 tab 触发班级加载，列表请求被闸挂起（必须确认真的在途再登出）
+    const listPending = page.waitForRequest('**/api/classes/list')
+    await page.click('.tabs button:nth-child(2)')
+    await listPending
+
+    // 在途时登出：reset 作废 revision，迟到的响应不允许写回
+    await page.click('.topbar-auth button')
+    await page.waitForSelector(`${panel} .login-form`)
+    releaseList()
+    await page.waitForTimeout(400)
+
+    // 换号（同一 mock 会话）后打开班级与作业页：不得残留上一账号的班级与作业
+    await page.fill(`${panel} input[type="text"]`, '2021001234')
+    await page.fill(`${panel} input[type="password"]`, 'pw')
+    await page.click(`${panel} button[type="submit"]`)
+    await page.waitForFunction(() => document.querySelectorAll('.panel').length === 0)
+
+    await page.click('.tabs button:has-text("班级")')
+    await page.waitForTimeout(500)
+    assert.equal(await page.locator('.view .class-card').count(), 0, '迟到的班级列表不得写回')
+
+    await page.click('.tabs button:nth-child(2)')
+    await page.waitForTimeout(500)
+    const groupText = await page.locator('.view').textContent()
+    assert.ok(!groupText.includes('A 的班级作业'), '换号后不得看到上一账号的班级作业')
+    assert.equal(listCalls >= 2, true, '换号后班级列表应重新加载')
+  } finally {
+    releaseList()
+    await page.close()
+  }
+})
+
+test('对抗：登出在途的课件课程列表不能写回，换号后不得看到上一账号的课程', async () => {
+  const page = await browser.newPage()
+  let releaseCourses = () => {}
+  let coursesCalls = 0
+  try {
+    const coursesGate = new Promise((resolve) => { releaseCourses = resolve })
+    await page.route('**/api/auth/login', (route) => fulfill(route, LOGIN_OK))
+    await page.route('**/api/ucloud/session', (route) => fulfill(route, UCLOUD_SESSION))
+    await page.route('**/api/ucloud/logout', (route) => fulfill(route, { success: true }))
+    await page.route('**/api/jwgl/logout', (route) => fulfill(route, { success: true }))
+    await page.route('**/api/ucloud/courses', async (route) => {
+      coursesCalls += 1
+      if (coursesCalls === 1) {
+        await coursesGate
+        return fulfill(route, { success: true, data: { courses: [
+          { id: 'site-a', name: 'A 的高等数学', teacher: 'A 的老师' },
+        ] } })
+      }
+      return fulfill(route, { success: true, data: { courses: [] } })
+    })
+
+    await page.goto(APP_ORIGIN, { waitUntil: 'networkidle' })
+    await page.fill(`${panel} input[type="text"]`, '2021001234')
+    await page.fill(`${panel} input[type="password"]`, 'pw')
+    await page.click(`${panel} button[type="submit"]`)
+    await page.waitForFunction(() => document.querySelectorAll('.panel').length === 0)
+
+    // 课件 tab 触发课程列表加载，请求被闸挂起（必须确认真的在途再登出）
+    const coursesPending = page.waitForRequest('**/api/ucloud/courses')
+    await page.click('.tabs button:has-text("课件")')
+    await coursesPending
+
+    await page.click('.topbar-auth button')
+    await page.waitForSelector(`${panel} .login-form`)
+    releaseCourses()
+    await page.waitForTimeout(400)
+
+    await page.fill(`${panel} input[type="text"]`, '2021001234')
+    await page.fill(`${panel} input[type="password"]`, 'pw')
+    await page.click(`${panel} button[type="submit"]`)
+    await page.waitForFunction(() => document.querySelectorAll('.panel').length === 0)
+
+    await page.click('.tabs button:has-text("课件")')
+    await page.waitForTimeout(500)
+    const text = await page.locator('.view').textContent()
+    assert.ok(!text.includes('A 的高等数学'), '迟到的课程列表不得写回')
+    assert.equal(coursesCalls >= 2, true, '换号后课程列表应重新加载')
+  } finally {
+    releaseCourses()
     await page.close()
   }
 })

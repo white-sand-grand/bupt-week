@@ -8,10 +8,10 @@ import { spawn } from 'node:child_process'
 const ROOT = new URL('../..', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1')
 
 const steps = [
-  { name: '单元测试', command: ['npm', 'test'], note: '199 个' },
+  { name: '单元测试', command: ['npm', 'test'], note: '345 个' },
   { name: '安全门禁', command: [process.execPath, 'scripts/gate/security.mjs'], note: 'audit + 密钥扫描 + 响应头' },
   { name: '生产构建', command: ['npm', 'run', 'build'], note: 'vite build' },
-  { name: '浏览器测试', command: ['npm', 'run', 'test:browser'], note: '33 个（需浏览器）' },
+  { name: '浏览器测试', command: ['npm', 'run', 'test:browser'], note: '66 个（需浏览器）' },
   { name: '性能门禁', command: [process.execPath, 'scripts/gate/performance.mjs'], note: '体积预算 + 运行时冒烟' },
 ]
 
