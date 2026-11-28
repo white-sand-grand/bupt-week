@@ -24,6 +24,9 @@ const assignmentsByClass = ref({})
 const state = ref('idle') // idle | loading | done | error
 const error = ref('')
 const selectedId = ref('')
+// 并发/换号守卫：load 全程有两个 await，登出或换号后迟到的响应不得写回，
+// 否则下一个账号会看到上一个账号的班级与作业（ensureLoaded 见 state!=='idle' 不再拉）。
+let revision = 0
 
 const assignments = computed(() => {
   const all = []
@@ -60,20 +63,25 @@ const classGroups = computed(() => {
 
 async function load() {
   if (!auth.ucloudReady.value) return
+  const mine = ++revision
+  const sessionId = auth.sessionIdFor('ucloud')
   state.value = 'loading'
   error.value = ''
   try {
-    const data = await listMyClasses(auth.sessionIdFor('ucloud'))
-    classes.value = data.classes || []
-    selectedId.value = classes.value.some((cls) => cls.classId === selectedId.value)
+    const data = await listMyClasses(sessionId)
+    if (mine !== revision || auth.sessionIdFor('ucloud') !== sessionId) return
+    const classList = data.classes || []
+    classes.value = classList
+    selectedId.value = classList.some((cls) => cls.classId === selectedId.value)
       ? selectedId.value
-      : classes.value[0]?.classId || ''
+      : classList[0]?.classId || ''
 
     const pairs = await Promise.allSettled(
-      classes.value.map((cls) => fetchClassAssignments(auth.sessionIdFor('ucloud'), cls.classId)),
+      classList.map((cls) => fetchClassAssignments(sessionId, cls.classId)),
     )
+    if (mine !== revision || auth.sessionIdFor('ucloud') !== sessionId) return
     const next = {}
-    classes.value.forEach((cls, index) => {
+    classList.forEach((cls, index) => {
       const result = pairs[index]
       const records = result.status === 'fulfilled' ? result.value.assignments ?? [] : []
       next[cls.classId] = records.map((record) => normalizeAssignment(record))
@@ -81,6 +89,7 @@ async function load() {
     assignmentsByClass.value = next
     state.value = 'done'
   } catch (caught) {
+    if (mine !== revision || auth.sessionIdFor('ucloud') !== sessionId) return
     state.value = 'error'
     error.value = friendlyError(caught)
   }
@@ -125,6 +134,7 @@ function select(classId) {
 }
 
 function reset() {
+  revision += 1
   classes.value = []
   assignmentsByClass.value = {}
   state.value = 'idle'

@@ -17,6 +17,8 @@ const coursesState = ref('idle') // idle | loading | done | error
 const coursesError = ref('')
 const currentSiteId = ref('')
 const trees = ref({}) // siteId -> { state, rows, error }
+// 并发/换号守卫：登出或换号后迟到的响应不得写回（同 classes store 的 revision 模式）。
+let revision = 0
 
 function toArray(value) {
   return Array.isArray(value) ? value : []
@@ -24,14 +26,19 @@ function toArray(value) {
 
 async function loadCourses() {
   if (!auth.ucloudReady.value || coursesState.value === 'loading') return
+  const mine = ++revision
+  const sessionId = auth.sessionIdFor('ucloud')
   coursesState.value = 'loading'
   coursesError.value = ''
   try {
-    courses.value = await fetchCourses(auth.sessionIdFor('ucloud'))
+    const list = await fetchCourses(sessionId)
+    if (mine !== revision || auth.sessionIdFor('ucloud') !== sessionId) return
+    courses.value = list
     coursesState.value = 'done'
     // 首次进入默认选第一门课；会话恢复时保留用户已选的
-    if (!currentSiteId.value && courses.value.length) openCourse(courses.value[0].id)
+    if (!currentSiteId.value && list.length) openCourse(list[0].id)
   } catch (error) {
+    if (mine !== revision || auth.sessionIdFor('ucloud') !== sessionId) return
     coursesState.value = 'error'
     coursesError.value = friendlyError(error)
   }
@@ -45,11 +52,15 @@ function openCourse(siteId) {
 async function loadTree(siteId) {
   const cached = trees.value[siteId]
   if (cached?.state === 'loading' || cached?.state === 'done') return
+  const mine = revision
+  const sessionId = auth.sessionIdFor('ucloud')
   trees.value = { ...trees.value, [siteId]: { state: 'loading', rows: [], error: '' } }
   try {
-    const tree = await fetchCourseware(auth.sessionIdFor('ucloud'), siteId)
+    const tree = await fetchCourseware(sessionId, siteId)
+    if (mine !== revision || auth.sessionIdFor('ucloud') !== sessionId) return
     trees.value = { ...trees.value, [siteId]: { state: 'done', rows: flattenTree(tree), error: '' } }
   } catch (error) {
+    if (mine !== revision || auth.sessionIdFor('ucloud') !== sessionId) return
     trees.value = { ...trees.value, [siteId]: { state: 'error', rows: [], error: friendlyError(error) } }
   }
 }
@@ -62,6 +73,7 @@ const fileCount = computed(() => {
 })
 
 function reset() {
+  revision += 1
   courses.value = []
   coursesState.value = 'idle'
   coursesError.value = ''
