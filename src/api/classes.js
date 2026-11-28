@@ -10,6 +10,10 @@ export function joinClass(sessionId, code, password) {
   return api('/api/classes/join', { method: 'POST', body: { sessionId, code, password } })
 }
 
+export function changeClassPassword(sessionId, classId, password) {
+  return api('/api/classes/password', { method: 'POST', body: { sessionId, classId, password } })
+}
+
 export function listMyClasses(sessionId) {
   return api('/api/classes/list', { method: 'POST', body: { sessionId } })
 }

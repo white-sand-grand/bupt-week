@@ -2365,6 +2365,12 @@ test('班级：可继续加入第二个班、作业按科目分组呈现、创�
       assignments['cls-2'] = []
       return fulfill(route, { success: true, data: { classId: 'cls-2', name: '物联网 2301 班' } })
     })
+    page.route('**/api/classes/password', (route) => {
+      const body = route.request().postDataJSON() || {}
+      assert.equal(body.classId, 'cls-1')
+      assert.equal(body.password, 'reset-pw')
+      return fulfill(route, { success: true, data: { classId: body.classId } })
+    })
     page.route('**/api/classes/dissolve', (route) => {
       const body = route.request().postDataJSON() || {}
       const index = classes.findIndex((item) => item.classId === body.classId)
@@ -2382,6 +2388,12 @@ test('班级：可继续加入第二个班、作业按科目分组呈现、创�
     // 已有一个班时，「加入或创建班级」入口仍在——可以继续加入
     await page.click('.tabs button:has-text("班级")')
     await page.waitForSelector('.view .class-card')
+    assert.equal(await page.locator('.view .password-chip').count(), 0, '旧班级初始没有可恢复的明文密码')
+    await page.click('.view .password-manage')
+    await page.fill('.view .password-form input[type="password"]', 'reset-pw')
+    await page.click('.view .password-form button[type="submit"]')
+    await page.waitForFunction(() => document.querySelector('.view .class-card')?.textContent.includes('reset-pw'))
+    assert.equal(await page.locator('.view .password-chip').count(), 1, '重设后创建者应看到新加入密码')
     await page.click('.view .entry-toggle:has-text("加入或创建班级")')
 
     const joinForm = page.locator('.view .entry-form').first()

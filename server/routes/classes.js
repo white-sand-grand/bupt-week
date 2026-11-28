@@ -15,7 +15,7 @@ export async function requireUcloudSession(store, sessionId) {
 export function createClassesRoutes({ getSessionStore, getBusinessService }) {
   const routes = new Hono()
   const actions = {
-    '/classes/create': 'create', '/classes/join': 'join', '/classes/list': 'list',
+    '/classes/create': 'create', '/classes/join': 'join', '/classes/password': 'changePassword', '/classes/list': 'list',
     '/classes/assignments': 'listAssignments', '/classes/assignment/add': 'addAssignment',
     '/classes/assignment/delete': 'deleteAssignment', '/classes/dissolve': 'dissolve',
     '/classes/sources': 'listSources', '/classes/source/add': 'addSource', '/classes/source/remove': 'removeSource',

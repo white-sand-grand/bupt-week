@@ -93,6 +93,10 @@ const deleting = ref('')
 const deleteError = ref('')
 const copied = ref(false)
 const passwordCopied = ref(false)
+const passwordOpen = ref(false)
+const newPassword = ref('')
+const passwordBusy = ref(false)
+const passwordError = ref('')
 
 // 解散是高危操作：点一次进入确认态（按钮变「确认解散？」），4 秒内再点才执行
 const dissolveArm = ref(false)
@@ -154,6 +158,22 @@ async function copyPassword() {
   }
 }
 
+async function submitPassword() {
+  const classId = classesStore.selectedId.value
+  if (!classId || passwordBusy.value) return
+  passwordBusy.value = true
+  passwordError.value = ''
+  try {
+    await classesStore.changePassword(classId, newPassword.value)
+    newPassword.value = ''
+    passwordOpen.value = false
+  } catch (caught) {
+    passwordError.value = caught.message || '密码修改失败，请稍后重试'
+  } finally {
+    passwordBusy.value = false
+  }
+}
+
 /** 月/日 时:分 的紧凑展示；截止空 = 不设截止。 */
 function deadlineLabel(assignment) {
   const raw = assignment.deadline
@@ -172,6 +192,11 @@ function startLoad() {
 
 onMounted(startLoad)
 watch(() => auth.ucloudReady.value, startLoad)
+watch(() => classesStore.selectedId.value, () => {
+  passwordOpen.value = false
+  newPassword.value = ''
+  passwordError.value = ''
+})
 </script>
 
 <template>
@@ -278,6 +303,12 @@ watch(() => auth.ucloudReady.value, startLoad)
             加入密码 <code>{{ classesStore.selectedClass.value.password }}</code>
             <span v-if="passwordCopied" class="copied">已复制</span>
           </button>
+          <button
+            v-if="classesStore.selectedClass.value.createdBy === auth.username.value"
+            class="password-manage"
+            type="button"
+            @click="passwordOpen = !passwordOpen"
+          >{{ passwordOpen ? '收起密码设置' : (classesStore.selectedClass.value.password ? '修改加入密码' : '设置加入密码') }}</button>
           <span class="member-count">{{ classesStore.selectedClass.value.memberCount }} 人</span>
           <button
             v-if="classesStore.selectedClass.value.createdBy === auth.username.value"
@@ -287,6 +318,23 @@ watch(() => auth.ucloudReady.value, startLoad)
             @click="dissolveSelected"
           >{{ dissolveArm ? '确认解散？点两次生效' : '解散班级' }}</button>
         </div>
+        <form
+          v-if="passwordOpen && classesStore.selectedClass.value.createdBy === auth.username.value"
+          class="password-form"
+          @submit.prevent="submitPassword"
+        >
+          <label class="field">
+            <span>新加入密码（4-32 位）</span>
+            <input v-model="newPassword" type="password" minlength="4" maxlength="32" autocomplete="new-password" required />
+          </label>
+          <button class="button-primary" type="submit" :disabled="passwordBusy || !newPassword">
+            {{ passwordBusy ? '保存中…' : '保存并显示密码' }}
+          </button>
+          <p v-if="passwordError" class="form-error">{{ passwordError }}</p>
+        </form>
+        <p v-else-if="classesStore.selectedClass.value.createdBy === auth.username.value && !classesStore.selectedClass.value.password" class="class-password-note">
+          旧密码无法恢复，请设置一个新的加入密码。
+        </p>
       </div>
       <p v-if="deleteError" class="form-error">{{ deleteError }}</p>
 
@@ -668,6 +716,36 @@ h3 {
   font-family: var(--font-mono);
   font-size: 0.8125rem;
   font-weight: 500;
+}
+
+.password-manage {
+  min-height: var(--touch);
+  padding: 0 0.6rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink-soft);
+  font: inherit;
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+.password-manage:hover {
+  border-color: var(--brand-500);
+  color: var(--brand-700);
+}
+
+.password-form {
+  display: grid;
+  gap: 0.625rem;
+  padding-top: 0.625rem;
+  border-top: 1px solid var(--line-soft);
+}
+
+.class-password-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.75rem;
 }
 
 .copied {

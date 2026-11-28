@@ -12,6 +12,7 @@ export class BusinessService {
       const input = args.input || {}
       if (action === 'create') return classes.create(input)
       if (action === 'join') return classes.join(input)
+      if (action === 'changePassword') return classes.changePassword(args.classId, input)
       if (action === 'list') return classes.list()
       if (action === 'listAssignments') return classes.listAssignments(args.classId)
       if (action === 'addAssignment') return classes.addAssignment(args.classId, input)

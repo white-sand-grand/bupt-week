@@ -108,6 +108,35 @@ test('join：正确密码入班成为成员；错误密码 401 且不进成员',
   assert.equal((await classStore.get(`class:${created.classId}:members`)).members.length, 2)
 })
 
+test('password/change：只有创建者可以重设加入密码，旧密码立即失效且不落明文', async () => {
+  const { app, sessionStore, classStore, seedClass } = makeApp()
+  const created = await seedClass()
+  const before = await classStore.get(`class:${created.classId}`)
+  await seedUcloud(sessionStore, 'uc2', '2021567890')
+  await post(app, '/api/classes/join', { sessionId: 'uc2', code: created.code, password: 'class-pw' })
+
+  const forbidden = await post(app, '/api/classes/password', {
+    sessionId: 'uc2', classId: created.classId, password: 'member-new-pw',
+  })
+  assert.equal(forbidden.status, 403)
+
+  const changed = await post(app, '/api/classes/password', {
+    sessionId: 'uc', classId: created.classId, password: 'new-class-pw',
+  })
+  assert.equal(changed.status, 200)
+  assert.deepEqual((await changed.json()).data, { classId: created.classId })
+
+  const after = await classStore.get(`class:${created.classId}`)
+  assert.notEqual(after.passHash, before.passHash)
+  assert.equal(JSON.stringify(after).includes('new-class-pw'), false)
+
+  await seedUcloud(sessionStore, 'uc3', '2021777777')
+  const old = await post(app, '/api/classes/join', { sessionId: 'uc3', code: created.code, password: 'class-pw' })
+  assert.equal(old.status, 401)
+  const fresh = await post(app, '/api/classes/join', { sessionId: 'uc3', code: created.code, password: 'new-class-pw' })
+  assert.equal(fresh.status, 200)
+})
+
 test('join：小写班级号自动归一；不存在的班级号报 404', async () => {
   const { app, sessionStore, seedClass } = makeApp()
   const created = await seedClass()

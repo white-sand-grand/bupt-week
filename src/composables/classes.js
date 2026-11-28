@@ -2,6 +2,7 @@ import { computed, readonly, ref, watch } from 'vue'
 import { auth } from './auth.js'
 import {
   addClassAssignment,
+  changeClassPassword,
   createClass,
   deleteClassAssignment,
   dissolveClass,
@@ -123,6 +124,15 @@ async function join({ code, password }) {
   return data
 }
 
+async function changePassword(classId, password) {
+  const data = await changeClassPassword(auth.sessionIdFor('ucloud'), classId, password)
+  if (data.classId && typeof password === 'string') {
+    knownPasswords.set(`${auth.username.value}:${data.classId}`, password)
+  }
+  await load()
+  return data
+}
+
 async function addAssignment(classId, payload) {
   const data = await addClassAssignment(auth.sessionIdFor('ucloud'), classId, payload)
   await load()
@@ -178,6 +188,7 @@ export const classesStore = {
   ensureLoaded,
   create,
   join,
+  changePassword,
   addAssignment,
   removeAssignment,
   dissolve,

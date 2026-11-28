@@ -135,6 +135,18 @@ export class ClassRecords {
     return { classId: record.id, name: record.name }
   }
 
+  async changePassword(classId, input) {
+    const record = await this.load(classId, false)
+    if (record.createdBy !== this.username) {
+      throw new ApiError(403, { stage: 'class-member', code: 'INSUFFICIENT_SCOPE', msg: '只有班级创建者可以修改加入密码' })
+    }
+    validPassword(input.password)
+    const salt = await newSalt()
+    const passHash = await hashPassword(input.password, salt)
+    await saveRecord(this.store, `class:${classId}`, { ...record, salt, passHash })
+    return { classId }
+  }
+
   async listAssignments(classId) {
     const record = await this.load(classId)
     return { assignments: (await this.assignments(classId)).map((item) => ({
