@@ -176,6 +176,11 @@ Node 部署的业务数据独立存于 `.business.local.d/`；详情和迁移注
     bupt-week-class-completed-v1:{username}       班级作业「确认完成」标记
     bupt-week-github-sources-v1                   公开 GitHub 仓库地址与默认分支（当前浏览器共用）
 
+
+## 项目参考与致谢
+
+- [AuceptinFang/MYUCLOUD](https://github.com/AuceptinFang/MYUCLOUD) — 主要参考：登录流程、课表解析器、截止时间分级
+- [Nemoyuzx/where_to_study](https://github.com/Nemoyuzx/where_to_study) — 参考："截止时间是时刻不是时长"的时间规范化、移动教务协议语义
 ## 许可证
 
 本项目基于 [Apache License 2.0](LICENSE) 开源（完整文本见仓库根目录的 LICENSE 文件）。你可以自由地使用、修改和再分发本项目的代码，但本人禁止纯商业**获利**用途；作为交换，再分发时（无论是否修改）请保留许可证与版权声明，并在明显位置标注本项目。
